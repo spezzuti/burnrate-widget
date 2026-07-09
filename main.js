@@ -47,6 +47,14 @@ try {
 // Non-sensitive settings storage (no encryption needed)
 const store = new Store();
 
+// --- AI Usage: multi-provider ---
+// Windows groups taskbar entries by AppUserModelID; without an explicit one,
+// dev runs (npm start) inherit electron.exe's identity and show the Electron
+// logo on the taskbar instead of the BurnRate icon.
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.burnrate.widget');
+}
+
 // Debug mode: set DEBUG_LOG=1 env var or pass --debug flag to see verbose logs.
 // Regular users will only see critical errors in the console.
 const DEBUG = process.env.DEBUG_LOG === '1' || process.argv.includes('--debug');
