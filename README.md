@@ -1,6 +1,6 @@
-# AI Usage
+# BurnRate
 
-Fork of [claude-usage-widget](https://github.com/SlavomirDurej/claude-usage-widget) by Slavomir Durej (MIT). Adds OpenRouter and OpenAI Codex usage tracking.
+BurnRate is a fork of [claude-usage-widget](https://github.com/SlavomirDurej/claude-usage-widget) by Slavomir Durej (MIT). Adds OpenRouter and OpenAI Codex usage tracking.
 
 A beautiful, standalone desktop widget for **Windows, macOS, and Linux** that displays your Claude.ai usage statistics in real-time.
 

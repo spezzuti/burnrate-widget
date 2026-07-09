@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e1e2e"/>
+      <stop offset="1" stop-color="#2a2a3e"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="0.55" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde68a"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#3b82f6"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bg)"/>
+  <!-- flame -->
+  <path d="M128 30
+           C 120 62 82 92 82 134
+           c 0 28 21 50 46 50
+           s 46 -22 46 -50
+           c 0 -42 -38 -72 -46 -104 Z"
+        fill="url(#flame)"/>
+  <path d="M128 100
+           c -7 16 -20 27 -20 44
+           a 20 20 0 0 0 40 0
+           c 0 -17 -13 -28 -20 -44 Z"
+        fill="url(#core)"/>
+  <!-- usage bar -->
+  <rect x="44" y="204" width="168" height="22" rx="11" fill="#3a3a52"/>
+  <rect x="44" y="204" width="112" height="22" rx="11" fill="url(#bar)"/>
+</svg>

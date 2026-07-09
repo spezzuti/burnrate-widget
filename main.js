@@ -19,12 +19,12 @@ const os = require('os');
 // electron-store uses different paths per platform
 let configPath;
 if (process.platform === 'darwin') {
-  configPath = path.join(os.homedir(), 'Library', 'Application Support', 'AI-Usage', 'config.json');
+  configPath = path.join(os.homedir(), 'Library', 'Application Support', 'BurnRate', 'config.json');
 } else if (process.platform === 'win32') {
-  configPath = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'AI-Usage', 'config.json');
+  configPath = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'BurnRate', 'config.json');
 } else {
   // Linux
-  configPath = path.join(os.homedir(), '.config', 'AI-Usage', 'config.json');
+  configPath = path.join(os.homedir(), '.config', 'BurnRate', 'config.json');
 }
 
 try {
@@ -749,7 +749,7 @@ function updateTrayIcon(usageData) {
       try {
         const staticIconPath = path.join(__dirname, process.platform === 'darwin' ? 'assets/tray-icon-mac.png' : process.platform === 'linux' ? 'assets/tray-icon-linux.png' : 'assets/tray-icon.png');
         sessionTray.setImage(staticIconPath);
-        sessionTray.setToolTip('AI Usage');
+        sessionTray.setToolTip('BurnRate');
       } catch (_) {}
     }
     // --- end AI Usage ---
@@ -1304,7 +1304,7 @@ ipcMain.handle('check-for-update', () => {
       path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
       method: 'GET',
       headers: {
-        'User-Agent': 'ai-usage-widget',
+        'User-Agent': 'burnrate-widget',
         'Accept': 'application/vnd.github+json'
       },
       timeout: 5000

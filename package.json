@@ -1,7 +1,7 @@
 {
-  "name": "ai-usage-widget",
+  "name": "burnrate-widget",
   "version": "1.7.5",
-  "description": "Desktop widget for AI usage monitoring (Claude, OpenRouter, Codex)",
+  "description": "BurnRate — desktop widget for AI usage monitoring (Claude, Codex, OpenRouter)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -18,7 +18,8 @@
     "electron",
     "openrouter",
     "codex",
-    "openai"
+    "openai",
+    "burnrate"
   ],
   "author": "Slavomir Durej",
   "license": "MIT",
@@ -38,8 +39,8 @@
     "electron-store": "^8.1.0"
   },
   "build": {
-    "appId": "com.aiusage.widget",
-    "productName": "AI-Usage",
+    "appId": "com.burnrate.widget",
+    "productName": "BurnRate",
     "copyright": "Copyright ┬⌐ 2025 Slavomir Durej",
     "publish": null,
     "win": {
@@ -51,7 +52,7 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-win-portable.${ext}",
-      "unpackDirName": "ai-usage"
+      "unpackDirName": "burnrate"
     },
     "nsis": {
       "oneClick": false,
