@@ -121,6 +121,8 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
                 </button>
 
+                <!-- AI Usage: multi-provider — Claude provider section wrapper -->
+                <div class="provider-section" id="claudeSection">
                 <!-- Column Headers -->
                 <div class="usage-headers">
                     <span></span>
@@ -168,6 +170,80 @@
                     </div>
                     <div class="timer-text" id="weeklyTimeText">--:--</div>
                     <div class="resets-at-text" id="weeklyResetsAt">--</div>
+                </div>
+                </div>
+                <!-- AI Usage: multi-provider — end Claude section -->
+
+                <!-- AI Usage: multi-provider — Codex provider section -->
+                <div class="provider-section" id="codexSection" style="display: none;">
+                    <div class="provider-header">Codex</div>
+                    <div class="usage-section provider-row" id="codexSessionRow">
+                        <span class="usage-label">Session</span>
+                        <div class="usage-bar-group">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="codexSessionProgress" style="width: 0%"></div>
+                            </div>
+                            <span class="usage-percentage" id="codexSessionPercentage">—</span>
+                        </div>
+                        <div class="usage-elapsed-group">
+                            <svg class="mini-timer" width="24" height="24" viewBox="0 0 24 24">
+                                <circle class="timer-bg" cx="12" cy="12" r="10" />
+                                <circle class="timer-progress" id="codexSessionTimer" cx="12" cy="12" r="10"
+                                    style="stroke-dasharray: 63; stroke-dashoffset: 63" />
+                            </svg>
+                        </div>
+                        <div class="timer-text" id="codexSessionTimeText">--:--</div>
+                        <div class="resets-at-text" id="codexSessionResetsAt">--</div>
+                    </div>
+                    <div class="usage-section provider-row" id="codexWeeklyRow">
+                        <span class="usage-label">Weekly</span>
+                        <div class="usage-bar-group">
+                            <div class="progress-bar">
+                                <div class="progress-fill weekly" id="codexWeeklyProgress" style="width: 0%"></div>
+                            </div>
+                            <span class="usage-percentage" id="codexWeeklyPercentage">—</span>
+                        </div>
+                        <div class="usage-elapsed-group">
+                            <svg class="mini-timer" width="24" height="24" viewBox="0 0 24 24">
+                                <circle class="timer-bg" cx="12" cy="12" r="10" />
+                                <circle class="timer-progress weekly" id="codexWeeklyTimer" cx="12" cy="12" r="10"
+                                    style="stroke-dasharray: 63; stroke-dashoffset: 63" />
+                            </svg>
+                        </div>
+                        <div class="timer-text" id="codexWeeklyTimeText">--:--</div>
+                        <div class="resets-at-text" id="codexWeeklyResetsAt">--</div>
+                    </div>
+                    <div class="provider-error" id="codexError" style="display: none;"></div>
+                </div>
+
+                <!-- AI Usage: multi-provider — OpenRouter provider section -->
+                <div class="provider-section" id="openrouterSection" style="display: none;">
+                    <div class="provider-header">
+                        <span>OpenRouter</span>
+                        <span class="provider-warn" id="orWarn" style="display: none;" title="">⚠</span>
+                    </div>
+                    <div class="or-row" id="orRowToday">
+                        <span class="usage-label">Today</span>
+                        <span class="or-amount" id="orTodayVal">—</span>
+                    </div>
+                    <div class="or-row" id="orRowWeek">
+                        <span class="usage-label">Week</span>
+                        <span class="or-amount" id="orWeekVal">—</span>
+                    </div>
+                    <div class="or-row" id="orRowMonth">
+                        <span class="usage-label">Month</span>
+                        <span class="or-amount" id="orMonthVal">—</span>
+                    </div>
+                    <div class="or-row" id="orRowCredits">
+                        <span class="usage-label">Credits</span>
+                        <span class="or-amount or-credits"><span id="orCreditsVal">—</span><span class="or-credits-total" id="orCreditsTotal"></span></span>
+                    </div>
+                    <div class="provider-error" id="openrouterError" style="display: none;"></div>
+                </div>
+
+                <!-- AI Usage: multi-provider — all-providers-hidden placeholder -->
+                <div class="provider-placeholder" id="allHiddenPlaceholder" style="display: none;">
+                    All providers hidden — open Settings to enable one
                 </div>
 
                 <!-- Expand Toggle -->
@@ -351,6 +427,71 @@
                                 </select>
                             </div>
                         </div>
+
+                        <!-- AI Usage: multi-provider — Providers group -->
+                        <div class="settings-providers" id="settingsProviders">
+                            <div class="settings-providers-head">Providers</div>
+                            <div class="settings-row-3col">
+                                <div class="settings-col">
+                                    <span class="settings-row-label">Claude</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="providerClaudeToggle">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="settings-col">
+                                    <span class="settings-row-label">Codex</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="providerCodexToggle">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                                <div class="settings-col">
+                                    <span class="settings-row-label">OpenRouter</span>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="providerOpenrouterToggle">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Claude rows -->
+                            <div class="provider-sub" id="claudeSub">
+                                <span class="provider-sub-label">Claude rows</span>
+                                <label class="row-check"><input type="checkbox" id="claudeRowSession"><span>Session</span></label>
+                                <label class="row-check"><input type="checkbox" id="claudeRowWeekly"><span>Weekly</span></label>
+                            </div>
+
+                            <!-- Codex rows + status -->
+                            <div class="provider-sub" id="codexSub" style="display: none;">
+                                <div class="provider-sub-line">
+                                    <span class="provider-sub-label">Codex rows</span>
+                                    <label class="row-check"><input type="checkbox" id="codexRowSession"><span>Session</span></label>
+                                    <label class="row-check"><input type="checkbox" id="codexRowWeekly"><span>Weekly</span></label>
+                                </div>
+                                <div class="provider-status" id="codexStatusLine">Checking…</div>
+                            </div>
+
+                            <!-- OpenRouter key + rows -->
+                            <div class="provider-sub" id="openrouterSub" style="display: none;">
+                                <div class="provider-key-row">
+                                    <input type="password" id="orKeyInput" placeholder="sk-or-..." spellcheck="false" autocomplete="off">
+                                    <button class="provider-key-btn" id="orKeySaveBtn">Save</button>
+                                    <button class="provider-key-btn provider-key-clear" id="orKeyClearBtn">Clear</button>
+                                </div>
+                                <div class="provider-key-meta">
+                                    <span class="provider-status" id="orKeyStatus">No key</span>
+                                    <a href="#" class="provider-link" id="orKeysLink">openrouter.ai/keys</a>
+                                </div>
+                                <div class="provider-sub-line">
+                                    <label class="row-check"><input type="checkbox" id="orRowTodayChk"><span>Today</span></label>
+                                    <label class="row-check"><input type="checkbox" id="orRowWeekChk"><span>Week</span></label>
+                                    <label class="row-check"><input type="checkbox" id="orRowMonthChk"><span>Month</span></label>
+                                    <label class="row-check"><input type="checkbox" id="orRowCreditsChk"><span>Credits</span></label>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- end AI Usage -->
 
                     </div>
 

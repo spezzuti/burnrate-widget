@@ -1557,3 +1557,270 @@ body.theme-light .compact-pct {
 .progress-fill.pulse {
     animation: pulse-danger 1.2s ease-in-out infinite;
 }
+
+/* ── AI Usage: multi-provider ─────────────────────────────── */
+
+/* Provider sections stack inside .content just like the Claude rows */
+.provider-section {
+    display: block;
+}
+
+/* Small uppercase provider label with a hairline separator above.
+   Sized so its total vertical footprint (margin+border+padding+line) ≈ 30px,
+   matching SECTION_HEADER_HEIGHT used by resizeWidget(). */
+.provider-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    line-height: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: #606074;
+    padding: 6px 16px 4px 12px;
+    margin-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Codex data rows reuse .usage-section grid but are sized to exactly
+   WIDGET_ROW_HEIGHT (28 + 2 margin = 30) so resize math stays exact. */
+.provider-row {
+    height: 28px;
+    margin-bottom: 2px;
+}
+
+/* OpenRouter dollar rows — label left, amount right, same fonts as usage rows */
+.or-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    height: 28px;
+    margin-bottom: 2px;
+    padding: 0 16px 0 12px;
+}
+
+.or-amount {
+    color: #e0e0e0;
+    font-size: 13px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+.or-credits-total {
+    color: #808090;
+    font-size: 10px;
+    font-weight: 400;
+    margin-left: 4px;
+}
+
+.provider-warn {
+    color: #f59e0b;
+    font-size: 10px;
+    cursor: default;
+}
+
+/* Provider error line — subtle, warning-toned, matches existing error styling */
+.provider-error {
+    color: #f59e0b;
+    font-size: 10px;
+    padding: 2px 16px 2px 12px;
+    line-height: 1.3;
+    white-space: normal;
+}
+
+/* All-providers-hidden placeholder — mirrors the no-usage message tone */
+.provider-placeholder {
+    color: #a0a0a0;
+    font-size: 11px;
+    text-align: center;
+    padding: 22px 16px;
+}
+
+/* Settings: Providers group */
+.settings-providers {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-providers-head {
+    color: #9090b0;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.settings-row-3col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+}
+
+.settings-row-3col .settings-col .settings-row-label {
+    width: auto;
+}
+
+.provider-sub {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 4px 2px;
+    border-left: 2px solid rgba(139, 92, 246, 0.25);
+    margin-left: 2px;
+    padding-left: 8px;
+}
+
+.provider-sub-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.provider-sub-label {
+    color: #8f8fa0;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.row-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #c0c0c0;
+    cursor: pointer;
+}
+
+.row-check input {
+    width: 13px;
+    height: 13px;
+    accent-color: #8b5cf6;
+    cursor: pointer;
+}
+
+.provider-status {
+    font-size: 10px;
+    color: #8f8fa0;
+}
+
+.provider-status.ok {
+    color: #34d399;
+}
+
+.provider-status.err {
+    color: #f59e0b;
+}
+
+.provider-key-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.provider-key-row input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e0e0e0;
+    padding: 4px 8px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+.provider-key-row input:focus {
+    border-color: #8b5cf6;
+}
+
+.provider-key-btn {
+    background: rgba(139, 92, 246, 0.2);
+    border: 1px solid rgba(139, 92, 246, 0.4);
+    color: #a78bfa;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 9px;
+    border-radius: 5px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s;
+}
+
+.provider-key-btn:hover {
+    background: rgba(139, 92, 246, 0.35);
+}
+
+.provider-key-clear {
+    background: transparent;
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.provider-key-clear:hover {
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.provider-key-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.provider-link {
+    color: #a78bfa;
+    font-size: 10px;
+    text-decoration: none;
+}
+
+.provider-link:hover {
+    text-decoration: underline;
+}
+
+/* Allow the settings list to scroll if the providers group makes it tall */
+.settings-rows {
+    overflow-y: auto;
+}
+
+/* Light theme */
+body.theme-light .provider-header {
+    color: #808098;
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .or-amount {
+    color: #1a1a2e;
+}
+
+body.theme-light .or-credits-total {
+    color: #808090;
+}
+
+body.theme-light .provider-placeholder {
+    color: #606080;
+}
+
+body.theme-light .settings-providers {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .row-check {
+    color: #303050;
+}
+
+body.theme-light .provider-key-row input {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.15);
+    color: #303050;
+}
+/* ── end AI Usage: multi-provider ─────────────────────────── */

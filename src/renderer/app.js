@@ -16,6 +16,22 @@ const WIDGET_HEIGHT_COLLAPSED = 155;
 const WIDGET_ROW_HEIGHT = 30;
 const GRAPH_HEIGHT = 232;
 
+// --- AI Usage: multi-provider ---
+// Layout constants for the extra provider sections. Provider data rows are
+// sized in CSS (.provider-row / .or-row = 28px + 2px margin) to be exactly
+// WIDGET_ROW_HEIGHT tall, and .provider-header to SECTION_HEADER_HEIGHT, so the
+// arithmetic in computeCollapsedHeight() stays exact.
+const SECTION_HEADER_HEIGHT = 30;   // provider-header footprint (margin+border+padding+line)
+const CONTENT_CHROME = 69;          // title-bar (37) + .content vertical padding (32), no Claude, no toggle
+const PLACEHOLDER_HEIGHT = 48;      // #allHiddenPlaceholder message block
+
+// Provider fetch state. OpenRouter is throttled independently of Claude/Codex.
+let lastOpenRouterFetch = 0;
+let latestCodexData = null;
+let latestOpenRouterData = null;
+let codexAuthPresent = false;
+// --- end AI Usage ---
+
 // Debug logging — only shows in DevTools (development mode).
 // Regular users won't see verbose logs in production.
 const DEBUG = (new URLSearchParams(window.location.search)).has('debug');
@@ -100,8 +116,74 @@ const elements = {
     compactWeeklyFill: document.getElementById('compactWeeklyFill'),
     compactWeeklyPct: document.getElementById('compactWeeklyPct'),
     compactSettingsOverlay: document.getElementById('compactSettingsOverlay'),
-    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn')
+    closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn'),
+
+    // --- AI Usage: multi-provider ---
+    claudeSection: document.getElementById('claudeSection'),
+    codexSection: document.getElementById('codexSection'),
+    openrouterSection: document.getElementById('openrouterSection'),
+    allHiddenPlaceholder: document.getElementById('allHiddenPlaceholder'),
+
+    codexError: document.getElementById('codexError'),
+    codexSessionRow: document.getElementById('codexSessionRow'),
+    codexWeeklyRow: document.getElementById('codexWeeklyRow'),
+    codexSessionProgress: document.getElementById('codexSessionProgress'),
+    codexSessionPercentage: document.getElementById('codexSessionPercentage'),
+    codexSessionTimer: document.getElementById('codexSessionTimer'),
+    codexSessionTimeText: document.getElementById('codexSessionTimeText'),
+    codexSessionResetsAt: document.getElementById('codexSessionResetsAt'),
+    codexWeeklyProgress: document.getElementById('codexWeeklyProgress'),
+    codexWeeklyPercentage: document.getElementById('codexWeeklyPercentage'),
+    codexWeeklyTimer: document.getElementById('codexWeeklyTimer'),
+    codexWeeklyTimeText: document.getElementById('codexWeeklyTimeText'),
+    codexWeeklyResetsAt: document.getElementById('codexWeeklyResetsAt'),
+
+    openrouterError: document.getElementById('openrouterError'),
+    orWarn: document.getElementById('orWarn'),
+    orRowToday: document.getElementById('orRowToday'),
+    orRowWeek: document.getElementById('orRowWeek'),
+    orRowMonth: document.getElementById('orRowMonth'),
+    orRowCredits: document.getElementById('orRowCredits'),
+    orTodayVal: document.getElementById('orTodayVal'),
+    orWeekVal: document.getElementById('orWeekVal'),
+    orMonthVal: document.getElementById('orMonthVal'),
+    orCreditsVal: document.getElementById('orCreditsVal'),
+    orCreditsTotal: document.getElementById('orCreditsTotal'),
+
+    // Settings — providers group
+    settingsProviders: document.getElementById('settingsProviders'),
+    providerClaudeToggle: document.getElementById('providerClaudeToggle'),
+    providerCodexToggle: document.getElementById('providerCodexToggle'),
+    providerOpenrouterToggle: document.getElementById('providerOpenrouterToggle'),
+    claudeSub: document.getElementById('claudeSub'),
+    codexSub: document.getElementById('codexSub'),
+    openrouterSub: document.getElementById('openrouterSub'),
+    claudeRowSession: document.getElementById('claudeRowSession'),
+    claudeRowWeekly: document.getElementById('claudeRowWeekly'),
+    codexRowSession: document.getElementById('codexRowSession'),
+    codexRowWeekly: document.getElementById('codexRowWeekly'),
+    codexStatusLine: document.getElementById('codexStatusLine'),
+    orRowTodayChk: document.getElementById('orRowTodayChk'),
+    orRowWeekChk: document.getElementById('orRowWeekChk'),
+    orRowMonthChk: document.getElementById('orRowMonthChk'),
+    orRowCreditsChk: document.getElementById('orRowCreditsChk'),
+    orKeyInput: document.getElementById('orKeyInput'),
+    orKeySaveBtn: document.getElementById('orKeySaveBtn'),
+    orKeyClearBtn: document.getElementById('orKeyClearBtn'),
+    orKeyStatus: document.getElementById('orKeyStatus'),
+    orKeysLink: document.getElementById('orKeysLink')
+    // --- end AI Usage ---
 };
+
+// --- AI Usage: multi-provider ---
+// Claude's two data rows have no ids (preserved verbatim from the original
+// markup); grab them from the section so per-row visibility can toggle them.
+const claudeDataRows = elements.claudeSection
+    ? elements.claudeSection.querySelectorAll('.usage-section')
+    : [];
+const claudeSessionRow = claudeDataRows[0] || null;
+const claudeWeeklyRow = claudeDataRows[1] || null;
+// --- end AI Usage ---
 
 // Populate organization selector dropdown
 function populateOrgSelector(organizations, selectedOrgId) {
@@ -188,17 +270,35 @@ async function init() {
         elements.expandSection.style.display = 'block';
     }
 
-    if (credentials.sessionKey && credentials.organizationId) {
+    // --- AI Usage: multi-provider ---
+    // Probe Codex auth presence up front so the Settings status line is accurate
+    // even before the first fetch.
+    try {
+        const cs = await window.electronAPI.getCodexStatus();
+        codexAuthPresent = !!(cs && cs.present);
+    } catch (e) { codexAuthPresent = false; }
+
+    const providers = settings.providers || { claude: true, codex: false, openrouter: false };
+    if (!providers.claude) {
+        // Claude disabled — show main content and fetch the other providers.
+        // Never fall through to the login screen.
+        showMainContent();
+        applyVisibility();
+        await fetchUsageData();
+        startAutoUpdate();
+    } else if (credentials.sessionKey && credentials.organizationId) {
         // Populate org selector if user has multiple orgs
         if (credentials.organizations && credentials.organizations.length > 0) {
             populateOrgSelector(credentials.organizations, credentials.organizationId);
         }
         showMainContent();
+        applyVisibility();
         await fetchUsageData();
         startAutoUpdate();
     } else {
         showLoginRequired();
     }
+    // --- end AI Usage ---
 
     // Populate version label then check for updates after a short delay
     const version = await window.electronAPI.getAppVersion();
@@ -247,7 +347,7 @@ function setupEventListeners() {
     elements.refreshBtn.addEventListener('click', async () => {
         debugLog('Refresh button clicked');
         elements.refreshBtn.classList.add('spinning');
-        await fetchUsageData();
+        await fetchUsageData({ manual: true }); // --- AI Usage: multi-provider --- manual bypasses OR 60s throttle (>10s)
         elements.refreshBtn.classList.remove('spinning');
     });
 
@@ -301,6 +401,9 @@ function setupEventListeners() {
     elements.closeSettingsBtn.addEventListener('click', async () => {
         await saveSettings();
         elements.settingsOverlay.style.display = 'none';
+        // --- AI Usage: multi-provider --- apply provider/row visibility on close
+        applyVisibility();
+        // --- end AI Usage ---
         if (_settingsOpenedFromCompact) {
             _settingsOpenedFromCompact = false;
             if (isCompactMode) {
@@ -312,6 +415,9 @@ function setupEventListeners() {
             resizeWidget();
         }
         startAutoUpdate();
+        // --- AI Usage: multi-provider --- pick up newly-enabled providers immediately
+        fetchUsageData({ manual: true });
+        // --- end AI Usage ---
     });
 
     elements.logoutBtn.addEventListener('click', async () => {
@@ -352,7 +458,7 @@ function setupEventListeners() {
     // Listen for refresh requests from tray
     window.electronAPI.onRefreshUsage(async () => {
         if (elements.refreshBtn) elements.refreshBtn.classList.add('spinning');
-        await fetchUsageData();
+        await fetchUsageData({ manual: true }); // --- AI Usage: multi-provider ---
         if (elements.refreshBtn) elements.refreshBtn.classList.remove('spinning');
     });
 
@@ -406,7 +512,7 @@ function setupEventListeners() {
         }
         await loadSettings();
         elements.settingsOverlay.style.display = 'flex';
-        window.electronAPI.resizeWindow(318);
+        sizeSettingsWindow(); // --- AI Usage: multi-provider --- size to fit providers group
     });
 
     // Close compact settings — apply compact toggle value then close
@@ -419,7 +525,115 @@ function setupEventListeners() {
         elements.compactSettingsOverlay.style.display = 'none';
         startAutoUpdate();
     });
+
+    // --- AI Usage: multi-provider --- provider settings wiring
+    if (elements.providerClaudeToggle) {
+        elements.providerClaudeToggle.addEventListener('change', () => {
+            updateProviderSubsVisibility();
+            sizeSettingsWindow();
+        });
+    }
+    if (elements.providerCodexToggle) {
+        elements.providerCodexToggle.addEventListener('change', async () => {
+            updateProviderSubsVisibility();
+            // Refresh on-disk auth presence so the status line is current.
+            try {
+                const cs = await window.electronAPI.getCodexStatus();
+                codexAuthPresent = !!(cs && cs.present);
+            } catch (e) { /* ignore */ }
+            updateCodexStatusLine();
+            sizeSettingsWindow();
+        });
+    }
+    if (elements.providerOpenrouterToggle) {
+        elements.providerOpenrouterToggle.addEventListener('change', () => {
+            updateProviderSubsVisibility();
+            sizeSettingsWindow();
+        });
+    }
+    if (elements.orKeySaveBtn) {
+        elements.orKeySaveBtn.addEventListener('click', async () => {
+            const key = elements.orKeyInput.value.trim();
+            if (!key) return;
+            try {
+                await window.electronAPI.saveOpenRouterKey(key);
+            } catch (e) { /* ignore */ }
+            elements.orKeyInput.value = '';
+            // A new key should fetch immediately next cycle.
+            lastOpenRouterFetch = 0;
+            latestOpenRouterData = null;
+            await refreshOpenRouterKeyStatus();
+            sizeSettingsWindow();
+        });
+    }
+    if (elements.orKeyClearBtn) {
+        elements.orKeyClearBtn.addEventListener('click', async () => {
+            try {
+                await window.electronAPI.deleteOpenRouterKey();
+            } catch (e) { /* ignore */ }
+            elements.orKeyInput.value = '';
+            latestOpenRouterData = null;
+            await refreshOpenRouterKeyStatus();
+        });
+    }
+    if (elements.orKeysLink) {
+        elements.orKeysLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            window.electronAPI.openExternal('https://openrouter.ai/keys');
+        });
+    }
+    // --- end AI Usage ---
 }
+
+// --- AI Usage: multi-provider ---
+// Show/hide the per-provider sub-panels in Settings based on the toggles.
+function updateProviderSubsVisibility() {
+    if (elements.claudeSub) {
+        elements.claudeSub.style.display = elements.providerClaudeToggle.checked ? 'flex' : 'none';
+    }
+    if (elements.codexSub) {
+        elements.codexSub.style.display = elements.providerCodexToggle.checked ? 'flex' : 'none';
+    }
+    if (elements.openrouterSub) {
+        elements.openrouterSub.style.display = elements.providerOpenrouterToggle.checked ? 'flex' : 'none';
+    }
+}
+
+// Refresh the "Key saved ✓" presence indicator (never echoes the key).
+async function refreshOpenRouterKeyStatus() {
+    if (!elements.orKeyStatus) return;
+    let present = false;
+    try {
+        const s = await window.electronAPI.getOpenRouterKeyStatus();
+        present = !!(s && s.present);
+    } catch (e) { present = false; }
+    elements.orKeyStatus.textContent = present ? 'Key saved ✓' : 'No key';
+    elements.orKeyStatus.className = 'provider-status' + (present ? ' ok' : '');
+}
+
+// Resize the window so the (possibly tall) Settings overlay fits without
+// clipping. Measures the actual rendered content and clamps to a sane range;
+// .settings-rows is overflow-y:auto as a safety net beyond the cap.
+function sizeSettingsWindow() {
+    const overlay = elements.settingsOverlay;
+    if (!overlay || overlay.style.display === 'none') return;
+    const header = overlay.querySelector('.settings-header');
+    const disc = overlay.querySelector('.settings-disclaimer');
+    const rows = overlay.querySelector('.settings-rows');
+    const footer = overlay.querySelector('.settings-footer');
+    if (!header || !rows || !footer) {
+        window.electronAPI.resizeWindow(318);
+        return;
+    }
+    const needed = header.offsetHeight
+        + (disc ? disc.offsetHeight : 0)
+        + rows.scrollHeight
+        + footer.offsetHeight
+        + 4;
+    const clamped = Math.min(Math.max(needed, 318), 640);
+    window.electronAPI.resizeWindow(clamped);
+}
+// --- end AI Usage ---
 
 // Handle manual sessionKey connect
 async function handleConnect() {
@@ -498,40 +712,351 @@ async function handleAutoDetect() {
     }
 }
 
-// Fetch usage data from Claude API
+// --- AI Usage: multi-provider ---
+// Fan out to every enabled provider. Each provider call is independently
+// try/caught so one failing never blocks the others. Claude keeps its original
+// behaviour (including taking over the screen with the login prompt), but ONLY
+// when it is the enabled provider — when Claude is disabled we go straight to
+// the main content so Codex/OpenRouter can render.
 async function fetchUsageData(options = {}) {
-    debugLog('fetchUsageData called');
+    debugLog('fetchUsageData called', options);
 
     if (isFetching) {
         debugLog('Fetch already in flight — skipping');
         return;
     }
 
-    if (!credentials.sessionKey || !credentials.organizationId) {
-        debugLog('Missing credentials, showing login');
-        showLoginRequired();
-        return;
-    }
+    const settings = window._cachedSettings || {};
+    const providers = settings.providers || { claude: true, codex: false, openrouter: false };
+    const isManual = !!options.manual;
 
     isFetching = true;
     try {
-        debugLog('Calling electronAPI.fetchUsageData...');
-        const data = await window.electronAPI.fetchUsageData(options);
-        debugLog('Received usage data:', data);
-        updateUI(data);
-    } catch (error) {
-        console.error('Error fetching usage data:', error);
-        if (error.message.includes('SessionExpired') || error.message.includes('Unauthorized')) {
-            credentials = { sessionKey: null, organizationId: null };
-            showLoginRequired();
+        // --- Claude ---
+        if (providers.claude) {
+            if (!credentials.sessionKey || !credentials.organizationId) {
+                debugLog('Claude enabled but missing credentials, showing login');
+                showLoginRequired();
+                return; // login screen owns the view
+            }
+            try {
+                const data = await window.electronAPI.fetchUsageData(options);
+                debugLog('Received Claude usage data:', data);
+                updateUI(data);
+            } catch (error) {
+                console.error('Error fetching Claude usage data:', error);
+                if (error.message && (error.message.includes('SessionExpired') || error.message.includes('Unauthorized'))) {
+                    credentials = { sessionKey: null, organizationId: null };
+                    showLoginRequired();
+                    return;
+                }
+                debugLog('Failed to fetch Claude usage data');
+            }
         } else {
-            debugLog('Failed to fetch usage data');
+            // Claude disabled — never show the login screen; ensure the main
+            // content is visible so the other providers have somewhere to render.
+            latestUsageData = null;
+            showMainContent();
         }
+
+        // --- Codex ---
+        if (providers.codex) {
+            try {
+                const cdata = await window.electronAPI.fetchCodexData();
+                debugLog('Received Codex data:', cdata);
+                renderCodex(cdata);
+            } catch (error) {
+                console.error('Error fetching Codex data:', error);
+                renderCodex({ ok: false, errorKind: 'network', error: 'Could not reach Codex' });
+            }
+        }
+
+        // --- OpenRouter (throttled) ---
+        if (providers.openrouter) {
+            const now = Date.now();
+            const minGap = isManual ? 10000 : 60000;
+            if (now - lastOpenRouterFetch >= minGap) {
+                lastOpenRouterFetch = now;
+                try {
+                    const odata = await window.electronAPI.fetchOpenRouterData();
+                    debugLog('Received OpenRouter data:', odata);
+                    renderOpenRouter(odata);
+                } catch (error) {
+                    console.error('Error fetching OpenRouter data:', error);
+                    renderOpenRouter({ ok: false, errorKind: 'network', error: 'Could not reach OpenRouter' });
+                }
+            } else {
+                debugLog('OpenRouter fetch throttled');
+            }
+        }
+
+        // Ensure sections/rows reflect current settings and the window is sized.
+        applyVisibility();
+        // Keep reset countdowns ticking even when Claude is disabled.
+        startCountdown();
     } finally {
         isFetching = false;
     }
 }
+// --- end AI Usage ---
 
+
+// --- AI Usage: multi-provider ---
+// OpenRouter amounts arrive as plain USD numbers (not cents), so formatCurrency
+// (which divides by 100) cannot be reused directly. This mirrors its output
+// style — "$" + two decimals — with an em dash for missing values.
+function fmtUSD(value) {
+    if (value === undefined || value === null || Number.isNaN(Number(value))) return '—';
+    return `$${Number(value).toFixed(2)}`;
+}
+
+function codexFriendlyMessage(data) {
+    const kind = data && data.errorKind;
+    switch (kind) {
+        case 'no-auth': return 'Codex login not found — log in with Codex CLI';
+        case 'expired': return 'Codex token expired — run Codex CLI once';
+        case 'endpoint': return 'Codex usage endpoint is unavailable';
+        case 'network': return 'Could not reach Codex';
+        case 'parse': return 'Unrecognized Codex usage response';
+        default: return (data && data.error) || 'Codex is unavailable';
+    }
+}
+
+// Populate a single Codex row (mirrors Claude's row population). `obj` is
+// { utilization, resets_at } or null. Reuses updateProgressBar/updateTimer so
+// the warn/danger thresholds and countdown behave identically to Claude.
+function applyCodexRow(progEl, pctEl, timerEl, timeTextEl, resetsEl, obj, totalMinutes, isWeekly) {
+    const settings = window._cachedSettings || {};
+    const timeFormat = settings.timeFormat || '12h';
+    const weeklyDateFormat = settings.weeklyDateFormat || 'date';
+
+    if (!obj || obj.utilization === undefined || obj.utilization === null) {
+        progEl.style.width = '0%';
+        progEl.classList.remove('warning', 'danger');
+        pctEl.textContent = '—';
+        timeTextEl.textContent = '—';
+        timeTextEl.style.opacity = '0.4';
+        timerEl.style.strokeDashoffset = 63;
+        timerEl.classList.remove('warning', 'danger');
+        timeTextEl.dataset.resets = '';
+        resetsEl.textContent = '—';
+        resetsEl.style.opacity = '0.4';
+        return;
+    }
+
+    updateProgressBar(progEl, pctEl, obj.utilization, isWeekly);
+    updateTimer(timerEl, timeTextEl, obj.resets_at, totalMinutes);
+    // Stash reset info so refreshCodexTimers() can tick the countdown live.
+    timeTextEl.dataset.resets = obj.resets_at || '';
+    timeTextEl.dataset.total = totalMinutes;
+    resetsEl.textContent = formatResetsAt(obj.resets_at, isWeekly, timeFormat, weeklyDateFormat);
+    resetsEl.style.opacity = obj.resets_at ? '1' : '0.4';
+}
+
+function renderCodex(data) {
+    latestCodexData = data;
+    updateCodexStatusLine();
+
+    if (!data || !data.ok) {
+        elements.codexError.textContent = codexFriendlyMessage(data);
+        elements.codexError.style.display = 'block';
+        applyCodexRow(elements.codexSessionProgress, elements.codexSessionPercentage,
+            elements.codexSessionTimer, elements.codexSessionTimeText, elements.codexSessionResetsAt,
+            null, 5 * 60, false);
+        applyCodexRow(elements.codexWeeklyProgress, elements.codexWeeklyPercentage,
+            elements.codexWeeklyTimer, elements.codexWeeklyTimeText, elements.codexWeeklyResetsAt,
+            null, 7 * 24 * 60, true);
+        return;
+    }
+
+    elements.codexError.style.display = 'none';
+    applyCodexRow(elements.codexSessionProgress, elements.codexSessionPercentage,
+        elements.codexSessionTimer, elements.codexSessionTimeText, elements.codexSessionResetsAt,
+        data.five_hour, 5 * 60, false);
+    applyCodexRow(elements.codexWeeklyProgress, elements.codexWeeklyPercentage,
+        elements.codexWeeklyTimer, elements.codexWeeklyTimeText, elements.codexWeeklyResetsAt,
+        data.seven_day, 7 * 24 * 60, true);
+}
+
+// Live-tick the Codex reset countdowns from the shared 30s interval.
+function refreshCodexTimers() {
+    if (!latestCodexData || !latestCodexData.ok) return;
+    const rows = [
+        { text: elements.codexSessionTimeText, circle: elements.codexSessionTimer },
+        { text: elements.codexWeeklyTimeText, circle: elements.codexWeeklyTimer }
+    ];
+    rows.forEach(({ text, circle }) => {
+        const resetsAt = text.dataset.resets;
+        const totalMinutes = parseInt(text.dataset.total);
+        if (resetsAt && circle && totalMinutes) {
+            updateTimer(circle, text, resetsAt, totalMinutes);
+        }
+    });
+}
+
+function openRouterFriendlyMessage(data) {
+    const kind = data && data.errorKind;
+    switch (kind) {
+        case 'no-key': return 'No API key configured — add one in Settings';
+        case 'auth': return 'OpenRouter rejected the API key — check Settings';
+        case 'network': return 'Could not reach OpenRouter';
+        case 'http': return 'OpenRouter returned an error';
+        case 'parse': return 'Unrecognized OpenRouter response';
+        default: return (data && data.error) || 'OpenRouter is unavailable';
+    }
+}
+
+function renderOpenRouter(data) {
+    latestOpenRouterData = data;
+
+    if (!data || !data.ok) {
+        elements.openrouterError.textContent = openRouterFriendlyMessage(data);
+        elements.openrouterError.style.display = 'block';
+        elements.orWarn.style.display = 'none';
+        elements.orTodayVal.textContent = '—';
+        elements.orWeekVal.textContent = '—';
+        elements.orMonthVal.textContent = '—';
+        elements.orCreditsVal.textContent = '—';
+        elements.orCreditsTotal.textContent = '';
+        return;
+    }
+
+    elements.openrouterError.style.display = 'none';
+    const spend = data.spend || {};
+    elements.orTodayVal.textContent = fmtUSD(spend.today);
+    elements.orWeekVal.textContent = fmtUSD(spend.week);
+    elements.orMonthVal.textContent = fmtUSD(spend.month);
+
+    const credits = data.credits || {};
+    elements.orCreditsVal.textContent = fmtUSD(credits.remaining);
+    elements.orCreditsTotal.textContent = (credits.total !== undefined && credits.total !== null)
+        ? `of ${fmtUSD(credits.total)}`
+        : '';
+
+    // Subtle warning indicator — data still shown.
+    if (data.warning) {
+        elements.orWarn.style.display = 'inline';
+        elements.orWarn.title = data.warning;
+    } else {
+        elements.orWarn.style.display = 'none';
+    }
+}
+
+// Compute the collapsed (pre-expand/graph/banner) window height from the
+// enabled providers and their visible rows. Anchored to WIDGET_HEIGHT_COLLAPSED
+// (155) for the default Claude case so that look is preserved pixel-for-pixel.
+function computeCollapsedHeight() {
+    const settings = window._cachedSettings || {};
+    const P = settings.providers || { claude: true, codex: false, openrouter: false };
+    const VR = settings.visibleRows || {};
+    const vc = VR.claude || { session: true, weekly: true };
+    const vx = VR.codex || { session: true, weekly: true };
+    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+
+    let h;
+    if (P.claude) {
+        // 155 == chrome + Claude headers + both Claude rows + expand toggle.
+        h = WIDGET_HEIGHT_COLLAPSED;
+        if (!vc.session) h -= WIDGET_ROW_HEIGHT;
+        if (!vc.weekly) h -= WIDGET_ROW_HEIGHT;
+    } else {
+        // No Claude section and no expand toggle — build up from bare chrome.
+        h = CONTENT_CHROME;
+    }
+
+    if (P.codex) {
+        h += SECTION_HEADER_HEIGHT;
+        if (vx.session) h += WIDGET_ROW_HEIGHT;
+        if (vx.weekly) h += WIDGET_ROW_HEIGHT;
+    }
+
+    if (P.openrouter) {
+        h += SECTION_HEADER_HEIGHT;
+        if (vo.today) h += WIDGET_ROW_HEIGHT;
+        if (vo.week) h += WIDGET_ROW_HEIGHT;
+        if (vo.month) h += WIDGET_ROW_HEIGHT;
+        if (vo.credits) h += WIDGET_ROW_HEIGHT;
+    }
+
+    if (!P.claude && !P.codex && !P.openrouter) {
+        h = CONTENT_CHROME + PLACEHOLDER_HEIGHT;
+    }
+
+    return h;
+}
+
+// Apply provider/row visibility from current settings, then resize the window.
+function applyVisibility() {
+    const settings = window._cachedSettings || {};
+    const P = settings.providers || { claude: true, codex: false, openrouter: false };
+    const VR = settings.visibleRows || {};
+    const vc = VR.claude || { session: true, weekly: true };
+    const vx = VR.codex || { session: true, weekly: true };
+    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+
+    // Claude
+    if (elements.claudeSection) elements.claudeSection.style.display = P.claude ? 'block' : 'none';
+    if (claudeSessionRow) claudeSessionRow.style.display = (P.claude && vc.session) ? '' : 'none';
+    if (claudeWeeklyRow) claudeWeeklyRow.style.display = (P.claude && vc.weekly) ? '' : 'none';
+
+    // Codex
+    if (elements.codexSection) elements.codexSection.style.display = P.codex ? 'block' : 'none';
+    if (elements.codexSessionRow) elements.codexSessionRow.style.display = (P.codex && vx.session) ? '' : 'none';
+    if (elements.codexWeeklyRow) elements.codexWeeklyRow.style.display = (P.codex && vx.weekly) ? '' : 'none';
+
+    // OpenRouter
+    if (elements.openrouterSection) elements.openrouterSection.style.display = P.openrouter ? 'block' : 'none';
+    if (elements.orRowToday) elements.orRowToday.style.display = (P.openrouter && vo.today) ? '' : 'none';
+    if (elements.orRowWeek) elements.orRowWeek.style.display = (P.openrouter && vo.week) ? '' : 'none';
+    if (elements.orRowMonth) elements.orRowMonth.style.display = (P.openrouter && vo.month) ? '' : 'none';
+    if (elements.orRowCredits) elements.orRowCredits.style.display = (P.openrouter && vo.credits) ? '' : 'none';
+
+    // All providers disabled → placeholder
+    const allOff = !P.claude && !P.codex && !P.openrouter;
+    if (elements.allHiddenPlaceholder) elements.allHiddenPlaceholder.style.display = allOff ? 'block' : 'none';
+
+    // Compact mode is Claude-only — hide its chevron when Claude is disabled.
+    if (elements.compactCollapseBtn && !isCompactMode) {
+        elements.compactCollapseBtn.style.display = P.claude ? 'flex' : 'none';
+    }
+    // The expand toggle relates to Claude's extended data; hide it when Claude
+    // is off (buildExtraRows, which normally controls it, won't run).
+    if (!P.claude && elements.expandToggle) {
+        elements.expandToggle.style.display = 'none';
+    }
+
+    if (!isCompactMode) resizeWidget();
+}
+
+// Refresh the Codex status line in Settings from the auth-presence probe and
+// the most recent fetch result.
+function updateCodexStatusLine() {
+    const el = elements.codexStatusLine;
+    if (!el) return;
+    const d = latestCodexData;
+    let text;
+    let cls = '';
+    if (d && d.ok) {
+        text = 'Auto-detected ✓';
+        cls = 'ok';
+    } else if (d && d.errorKind === 'no-auth') {
+        text = 'Not found — log in with Codex CLI';
+        cls = 'err';
+    } else if (d && d.errorKind === 'expired') {
+        text = 'Token expired — run Codex CLI once';
+        cls = 'err';
+    } else if (d && !d.ok) {
+        text = codexFriendlyMessage(d);
+        cls = 'err';
+    } else {
+        // No fetch yet — fall back to on-disk auth presence.
+        text = codexAuthPresent ? 'Auto-detected ✓' : 'Not found — log in with Codex CLI';
+        cls = codexAuthPresent ? 'ok' : 'err';
+    }
+    el.textContent = text;
+    el.className = 'provider-status' + (cls ? ' ' + cls : '');
+}
+// --- end AI Usage ---
 
 // Update UI with usage data
 // Format a cent-based amount with the correct currency symbol.
@@ -756,7 +1281,10 @@ function resizeWidget(bannerVisible) {
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
     const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
-    const totalHeight = WIDGET_HEIGHT_COLLAPSED + expandedOffset + graphOffset + bannerOffset;
+    // --- AI Usage: multi-provider --- base height now depends on enabled providers/rows
+    const baseHeight = computeCollapsedHeight();
+    const totalHeight = baseHeight + expandedOffset + graphOffset + bannerOffset;
+    // --- end AI Usage ---
     window.electronAPI.resizeWindow(totalHeight);
 }
 
@@ -1069,6 +1597,7 @@ function startCountdown() {
     countdownInterval = setInterval(() => {
         refreshTimers();
         if (isExpanded) refreshExtraTimers();
+        refreshCodexTimers(); // --- AI Usage: multi-provider ---
     }, 30000);
 }
 
@@ -1567,6 +2096,39 @@ async function loadSettings() {
         btn.classList.toggle('active', btn.dataset.theme === settings.theme);
     });
 
+    // --- AI Usage: multi-provider --- populate provider toggles, row checkboxes, statuses
+    const P = settings.providers || { claude: true, codex: false, openrouter: false };
+    const VR = settings.visibleRows || {};
+    const vc = VR.claude || { session: true, weekly: true };
+    const vx = VR.codex || { session: true, weekly: true };
+    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+
+    if (elements.providerClaudeToggle) elements.providerClaudeToggle.checked = !!P.claude;
+    if (elements.providerCodexToggle) elements.providerCodexToggle.checked = !!P.codex;
+    if (elements.providerOpenrouterToggle) elements.providerOpenrouterToggle.checked = !!P.openrouter;
+
+    if (elements.claudeRowSession) elements.claudeRowSession.checked = vc.session !== false;
+    if (elements.claudeRowWeekly) elements.claudeRowWeekly.checked = vc.weekly !== false;
+    if (elements.codexRowSession) elements.codexRowSession.checked = vx.session !== false;
+    if (elements.codexRowWeekly) elements.codexRowWeekly.checked = vx.weekly !== false;
+    if (elements.orRowTodayChk) elements.orRowTodayChk.checked = vo.today !== false;
+    if (elements.orRowWeekChk) elements.orRowWeekChk.checked = vo.week !== false;
+    if (elements.orRowMonthChk) elements.orRowMonthChk.checked = vo.month !== false;
+    if (elements.orRowCreditsChk) elements.orRowCreditsChk.checked = vo.credits !== false;
+
+    updateProviderSubsVisibility();
+
+    // Codex auth presence + status line
+    try {
+        const cs = await window.electronAPI.getCodexStatus();
+        codexAuthPresent = !!(cs && cs.present);
+    } catch (e) { /* keep prior value */ }
+    updateCodexStatusLine();
+
+    // OpenRouter key presence indicator (never echoes the key)
+    await refreshOpenRouterKeyStatus();
+    // --- end AI Usage ---
+
     applyTheme(settings.theme);
     if (window.electronAPI.platform === 'darwin') {
         document.getElementById('trayLabel').textContent = 'Hide from Dock';
@@ -1601,8 +2163,40 @@ async function saveSettings() {
         usageAlerts: elements.usageAlertsToggle.checked,
         compactMode: isCompactMode,
         graphVisible: graphVisible,
-        expandedOpen: isExpanded
+        expandedOpen: isExpanded,
+        // --- AI Usage: multi-provider ---
+        providers: {
+            claude: elements.providerClaudeToggle ? elements.providerClaudeToggle.checked : true,
+            codex: elements.providerCodexToggle ? elements.providerCodexToggle.checked : false,
+            openrouter: elements.providerOpenrouterToggle ? elements.providerOpenrouterToggle.checked : false
+        },
+        visibleRows: {
+            claude: {
+                session: elements.claudeRowSession ? elements.claudeRowSession.checked : true,
+                weekly: elements.claudeRowWeekly ? elements.claudeRowWeekly.checked : true
+            },
+            codex: {
+                session: elements.codexRowSession ? elements.codexRowSession.checked : true,
+                weekly: elements.codexRowWeekly ? elements.codexRowWeekly.checked : true
+            },
+            openrouter: {
+                today: elements.orRowTodayChk ? elements.orRowTodayChk.checked : true,
+                week: elements.orRowWeekChk ? elements.orRowWeekChk.checked : true,
+                month: elements.orRowMonthChk ? elements.orRowMonthChk.checked : true,
+                credits: elements.orRowCreditsChk ? elements.orRowCreditsChk.checked : true
+            }
+        }
+        // --- end AI Usage ---
     };
+
+    // --- AI Usage: multi-provider ---
+    // If OpenRouter was just enabled and has no data yet, clear the throttle so
+    // the post-close refresh fetches it right away.
+    if (settings.providers.openrouter && !latestOpenRouterData) {
+        lastOpenRouterFetch = 0;
+    }
+    // --- end AI Usage ---
+
     await window.electronAPI.saveSettings(settings);
     window._cachedSettings = settings;
     applyTheme(settings.theme);
