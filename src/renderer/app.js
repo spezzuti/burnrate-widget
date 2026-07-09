@@ -22,14 +22,17 @@ const GRAPH_HEIGHT = 232;
 // WIDGET_ROW_HEIGHT tall, and .provider-header to SECTION_HEADER_HEIGHT, so the
 // arithmetic in computeCollapsedHeight() stays exact.
 const SECTION_HEADER_HEIGHT = 30;   // provider-header footprint (margin+border+padding+line)
-const CONTENT_CHROME = 69;          // title-bar (37) + .content vertical padding (32), no Claude, no toggle
-const PLACEHOLDER_HEIGHT = 48;      // #allHiddenPlaceholder message block
+const CLAUDE_ROW_HEIGHT = 34;       // Claude .usage-section = 32px + 2px margin
+const CONTENT_CHROME = 68;          // title-bar (36) + .content vertical padding (32), no Claude, no toggle
+const PLACEHOLDER_HEIGHT = 57;      // #allHiddenPlaceholder message block (~44px padding + ~13px line)
 
 // Provider fetch state. OpenRouter is throttled independently of Claude/Codex.
 let lastOpenRouterFetch = 0;
 let latestCodexData = null;
-let latestOpenRouterData = null;
+let openRouterFetched = false;   // true once OpenRouter has returned any result this session
 let codexAuthPresent = false;
+// Last window height sent to the main process; used to skip redundant resize IPC.
+let _lastSentHeight = -1;
 // --- end AI Usage ---
 
 // Debug logging — only shows in DevTools (development mode).
@@ -124,6 +127,7 @@ const elements = {
     openrouterSection: document.getElementById('openrouterSection'),
     allHiddenPlaceholder: document.getElementById('allHiddenPlaceholder'),
 
+    claudeError: document.getElementById('claudeError'),
     codexError: document.getElementById('codexError'),
     codexSessionRow: document.getElementById('codexSessionRow'),
     codexWeeklyRow: document.getElementById('codexWeeklyRow'),
@@ -151,7 +155,6 @@ const elements = {
     orCreditsTotal: document.getElementById('orCreditsTotal'),
 
     // Settings — providers group
-    settingsProviders: document.getElementById('settingsProviders'),
     providerClaudeToggle: document.getElementById('providerClaudeToggle'),
     providerCodexToggle: document.getElementById('providerCodexToggle'),
     providerOpenrouterToggle: document.getElementById('providerOpenrouterToggle'),
@@ -183,6 +186,21 @@ const claudeDataRows = elements.claudeSection
     : [];
 const claudeSessionRow = claudeDataRows[0] || null;
 const claudeWeeklyRow = claudeDataRows[1] || null;
+
+// Single source of truth for provider/row preference defaults. Everywhere that
+// reads settings.providers / settings.visibleRows funnels through here so the
+// default literals live in exactly one place.
+function getProviderPrefs(settings) {
+    const s = settings || {};
+    const providers = s.providers || { claude: true, codex: false, openrouter: false };
+    const VR = s.visibleRows || {};
+    const visibleRows = {
+        claude: VR.claude || { session: true, weekly: true },
+        codex: VR.codex || { session: true, weekly: true },
+        openrouter: VR.openrouter || { today: true, week: true, month: true, credits: true }
+    };
+    return { providers, visibleRows };
+}
 // --- end AI Usage ---
 
 // Populate organization selector dropdown
@@ -272,13 +290,12 @@ async function init() {
 
     // --- AI Usage: multi-provider ---
     // Probe Codex auth presence up front so the Settings status line is accurate
-    // even before the first fetch.
-    try {
-        const cs = await window.electronAPI.getCodexStatus();
-        codexAuthPresent = !!(cs && cs.present);
-    } catch (e) { codexAuthPresent = false; }
+    // even before the first fetch. Fire-and-forget so it never blocks first paint.
+    window.electronAPI.getCodexStatus()
+        .then((cs) => { codexAuthPresent = !!(cs && cs.present); })
+        .catch(() => { codexAuthPresent = false; });
 
-    const providers = settings.providers || { claude: true, codex: false, openrouter: false };
+    const { providers } = getProviderPrefs(settings);
     if (!providers.claude) {
         // Claude disabled — show main content and fetch the other providers.
         // Never fall through to the login screen.
@@ -401,19 +418,18 @@ function setupEventListeners() {
     elements.closeSettingsBtn.addEventListener('click', async () => {
         await saveSettings();
         elements.settingsOverlay.style.display = 'none';
-        // --- AI Usage: multi-provider --- apply provider/row visibility on close
+        // --- AI Usage: multi-provider --- one immediate visibility pass for instant
+        // feedback when toggling rows; applyVisibility() already resizes (when not
+        // compact), and the resize memo no-ops any follow-up from fetchUsageData.
         applyVisibility();
-        // --- end AI Usage ---
         if (_settingsOpenedFromCompact) {
             _settingsOpenedFromCompact = false;
             if (isCompactMode) {
                 window.electronAPI.setCompactMode(true);
-            } else {
-                resizeWidget();
             }
-        } else if (!isCompactMode) {
-            resizeWidget();
+            // else: applyVisibility() already resized the normal-mode window.
         }
+        // --- end AI Usage ---
         startAutoUpdate();
         // --- AI Usage: multi-provider --- pick up newly-enabled providers immediately
         fetchUsageData({ manual: true });
@@ -561,7 +577,7 @@ function setupEventListeners() {
             elements.orKeyInput.value = '';
             // A new key should fetch immediately next cycle.
             lastOpenRouterFetch = 0;
-            latestOpenRouterData = null;
+            openRouterFetched = false;
             await refreshOpenRouterKeyStatus();
             sizeSettingsWindow();
         });
@@ -572,7 +588,7 @@ function setupEventListeners() {
                 await window.electronAPI.deleteOpenRouterKey();
             } catch (e) { /* ignore */ }
             elements.orKeyInput.value = '';
-            latestOpenRouterData = null;
+            openRouterFetched = false;
             await refreshOpenRouterKeyStatus();
         });
     }
@@ -580,6 +596,13 @@ function setupEventListeners() {
         elements.orKeysLink.addEventListener('click', (e) => {
             e.preventDefault();
             window.electronAPI.openExternal('https://openrouter.ai/keys');
+        });
+    }
+    // Claude section error line — clicking it takes the user to the login screen
+    // deliberately (the error is shown non-blockingly when other providers are on).
+    if (elements.claudeError) {
+        elements.claudeError.addEventListener('click', () => {
+            showLoginRequired();
         });
     }
     // --- end AI Usage ---
@@ -617,6 +640,9 @@ async function refreshOpenRouterKeyStatus() {
 function sizeSettingsWindow() {
     const overlay = elements.settingsOverlay;
     if (!overlay || overlay.style.display === 'none') return;
+    // Settings sizes the window out-of-band from the widget layout; reset the
+    // widget resize memo so the next resizeWidget() always re-sends.
+    _lastSentHeight = -1;
     const header = overlay.querySelector('.settings-header');
     const disc = overlay.querySelector('.settings-disclaimer');
     const rows = overlay.querySelector('.settings-rows');
@@ -713,11 +739,41 @@ async function handleAutoDetect() {
 }
 
 // --- AI Usage: multi-provider ---
-// Fan out to every enabled provider. Each provider call is independently
-// try/caught so one failing never blocks the others. Claude keeps its original
-// behaviour (including taking over the screen with the login prompt), but ONLY
-// when it is the enabled provider — when Claude is disabled we go straight to
-// the main content so Codex/OpenRouter can render.
+// Blank Claude's two data rows to the neutral placeholder state (mirrors the
+// Codex null-row handling) so a stale percentage doesn't linger when Claude
+// can't authenticate but other providers keep rendering.
+function blankClaudeRows() {
+    const rows = [
+        { prog: elements.sessionProgress, pct: elements.sessionPercentage, timer: elements.sessionTimer, text: elements.sessionTimeText, resets: elements.sessionResetsAt },
+        { prog: elements.weeklyProgress, pct: elements.weeklyPercentage, timer: elements.weeklyTimer, text: elements.weeklyTimeText, resets: elements.weeklyResetsAt }
+    ];
+    rows.forEach(({ prog, pct, timer, text, resets }) => {
+        if (prog) { prog.style.width = '0%'; prog.classList.remove('warning', 'danger'); }
+        if (pct) pct.textContent = '—';
+        if (text) { text.textContent = '—'; text.style.opacity = '0.4'; }
+        if (timer) { timer.style.strokeDashoffset = 63; timer.classList.remove('warning', 'danger'); }
+        if (resets) { resets.textContent = '—'; resets.style.opacity = '0.4'; }
+    });
+}
+
+// Degrade Claude gracefully when its credentials are missing/expired but another
+// provider is enabled: keep the main content on screen, blank Claude's rows, and
+// show a clickable section error that routes to the login screen on demand.
+function showClaudeAuthError() {
+    latestUsageData = null;
+    showMainContent();
+    blankClaudeRows();
+    if (elements.claudeError) {
+        elements.claudeError.textContent = 'Claude session expired — open Settings or restart to log in';
+        elements.claudeError.style.display = 'block';
+    }
+}
+
+// Fan out to every enabled provider CONCURRENTLY. Each provider call is
+// independently caught so one failing never blocks the others; a single
+// applyVisibility()/startCountdown() runs once all have settled. Claude only
+// takes over the whole screen with the login prompt when NO other provider is
+// enabled — otherwise its auth failure degrades to an inline, clickable error.
 async function fetchUsageData(options = {}) {
     debugLog('fetchUsageData called', options);
 
@@ -727,32 +783,52 @@ async function fetchUsageData(options = {}) {
     }
 
     const settings = window._cachedSettings || {};
-    const providers = settings.providers || { claude: true, codex: false, openrouter: false };
+    const { providers } = getProviderPrefs(settings);
     const isManual = !!options.manual;
+    const otherProviderEnabled = !!(providers.codex || providers.openrouter);
+
+    // Claude enabled but no usable credentials: either own the screen (Claude
+    // only) or degrade inline so Codex/OpenRouter can still render.
+    if (providers.claude && (!credentials.sessionKey || !credentials.organizationId)) {
+        if (!otherProviderEnabled) {
+            debugLog('Claude enabled, missing credentials, no other provider — showing login');
+            showLoginRequired();
+            return; // login screen owns the view
+        }
+        debugLog('Claude missing credentials but other providers enabled — degrading Claude only');
+        showClaudeAuthError();
+    }
 
     isFetching = true;
+    let countdownStarted = false;
     try {
-        // --- Claude ---
-        if (providers.claude) {
-            if (!credentials.sessionKey || !credentials.organizationId) {
-                debugLog('Claude enabled but missing credentials, showing login');
-                showLoginRequired();
-                return; // login screen owns the view
-            }
-            try {
-                const data = await window.electronAPI.fetchUsageData(options);
-                debugLog('Received Claude usage data:', data);
-                updateUI(data);
-            } catch (error) {
-                console.error('Error fetching Claude usage data:', error);
-                if (error.message && (error.message.includes('SessionExpired') || error.message.includes('Unauthorized'))) {
-                    credentials = { sessionKey: null, organizationId: null };
-                    showLoginRequired();
-                    return;
-                }
-                debugLog('Failed to fetch Claude usage data');
-            }
-        } else {
+        const tasks = [];
+
+        // --- Claude --- (only fetch when it actually has credentials)
+        if (providers.claude && credentials.sessionKey && credentials.organizationId) {
+            tasks.push(
+                window.electronAPI.fetchUsageData(options)
+                    .then((data) => {
+                        debugLog('Received Claude usage data:', data);
+                        if (elements.claudeError) elements.claudeError.style.display = 'none';
+                        updateUI(data); // updateUI() restarts the shared countdown
+                        countdownStarted = true;
+                    })
+                    .catch((error) => {
+                        console.error('Error fetching Claude usage data:', error);
+                        if (error.message && (error.message.includes('SessionExpired') || error.message.includes('Unauthorized'))) {
+                            credentials = { sessionKey: null, organizationId: null };
+                            if (otherProviderEnabled) {
+                                showClaudeAuthError();
+                            } else {
+                                showLoginRequired();
+                            }
+                        } else {
+                            debugLog('Failed to fetch Claude usage data');
+                        }
+                    })
+            );
+        } else if (!providers.claude) {
             // Claude disabled — never show the login screen; ensure the main
             // content is visible so the other providers have somewhere to render.
             latestUsageData = null;
@@ -761,14 +837,17 @@ async function fetchUsageData(options = {}) {
 
         // --- Codex ---
         if (providers.codex) {
-            try {
-                const cdata = await window.electronAPI.fetchCodexData();
-                debugLog('Received Codex data:', cdata);
-                renderCodex(cdata);
-            } catch (error) {
-                console.error('Error fetching Codex data:', error);
-                renderCodex({ ok: false, errorKind: 'network', error: 'Could not reach Codex' });
-            }
+            tasks.push(
+                window.electronAPI.fetchCodexData()
+                    .then((cdata) => {
+                        debugLog('Received Codex data:', cdata);
+                        renderCodex(cdata);
+                    })
+                    .catch((error) => {
+                        console.error('Error fetching Codex data:', error);
+                        renderCodex({ ok: false, errorKind: 'network', error: 'Could not reach Codex' });
+                    })
+            );
         }
 
         // --- OpenRouter (throttled) ---
@@ -777,23 +856,28 @@ async function fetchUsageData(options = {}) {
             const minGap = isManual ? 10000 : 60000;
             if (now - lastOpenRouterFetch >= minGap) {
                 lastOpenRouterFetch = now;
-                try {
-                    const odata = await window.electronAPI.fetchOpenRouterData();
-                    debugLog('Received OpenRouter data:', odata);
-                    renderOpenRouter(odata);
-                } catch (error) {
-                    console.error('Error fetching OpenRouter data:', error);
-                    renderOpenRouter({ ok: false, errorKind: 'network', error: 'Could not reach OpenRouter' });
-                }
+                tasks.push(
+                    window.electronAPI.fetchOpenRouterData()
+                        .then((odata) => {
+                            debugLog('Received OpenRouter data:', odata);
+                            renderOpenRouter(odata);
+                        })
+                        .catch((error) => {
+                            console.error('Error fetching OpenRouter data:', error);
+                            renderOpenRouter({ ok: false, errorKind: 'network', error: 'Could not reach OpenRouter' });
+                        })
+                );
             } else {
                 debugLog('OpenRouter fetch throttled');
             }
         }
 
-        // Ensure sections/rows reflect current settings and the window is sized.
+        // Run the enabled provider fetches concurrently; failures stay isolated.
+        await Promise.allSettled(tasks);
+
+        // One layout pass + at most one countdown restart for the whole cycle.
         applyVisibility();
-        // Keep reset countdowns ticking even when Claude is disabled.
-        startCountdown();
+        if (!countdownStarted) startCountdown(); // updateUI() may already have
     } finally {
         isFetching = false;
     }
@@ -807,7 +891,9 @@ async function fetchUsageData(options = {}) {
 // style — "$" + two decimals — with an em dash for missing values.
 function fmtUSD(value) {
     if (value === undefined || value === null || Number.isNaN(Number(value))) return '—';
-    return `$${Number(value).toFixed(2)}`;
+    const n = Number(value);
+    const sign = n < 0 ? '-' : '';
+    return `${sign}$${Math.abs(n).toFixed(2)}`;
 }
 
 function codexFriendlyMessage(data) {
@@ -907,7 +993,7 @@ function openRouterFriendlyMessage(data) {
 }
 
 function renderOpenRouter(data) {
-    latestOpenRouterData = data;
+    openRouterFetched = true;
 
     if (!data || !data.ok) {
         elements.openrouterError.textContent = openRouterFriendlyMessage(data);
@@ -947,18 +1033,17 @@ function renderOpenRouter(data) {
 // (155) for the default Claude case so that look is preserved pixel-for-pixel.
 function computeCollapsedHeight() {
     const settings = window._cachedSettings || {};
-    const P = settings.providers || { claude: true, codex: false, openrouter: false };
-    const VR = settings.visibleRows || {};
-    const vc = VR.claude || { session: true, weekly: true };
-    const vx = VR.codex || { session: true, weekly: true };
-    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+    const { providers: P, visibleRows } = getProviderPrefs(settings);
+    const vc = visibleRows.claude;
+    const vx = visibleRows.codex;
+    const vo = visibleRows.openrouter;
 
     let h;
     if (P.claude) {
         // 155 == chrome + Claude headers + both Claude rows + expand toggle.
         h = WIDGET_HEIGHT_COLLAPSED;
-        if (!vc.session) h -= WIDGET_ROW_HEIGHT;
-        if (!vc.weekly) h -= WIDGET_ROW_HEIGHT;
+        if (!vc.session) h -= CLAUDE_ROW_HEIGHT;
+        if (!vc.weekly) h -= CLAUDE_ROW_HEIGHT;
     } else {
         // No Claude section and no expand toggle — build up from bare chrome.
         h = CONTENT_CHROME;
@@ -982,17 +1067,23 @@ function computeCollapsedHeight() {
         h = CONTENT_CHROME + PLACEHOLDER_HEIGHT;
     }
 
+    // Budget for any visible provider-error line. Messages can wrap, so measure
+    // the actual rendered height at compute time; hidden elements report 0.
+    const errorEls = [elements.claudeError, elements.codexError, elements.openrouterError];
+    for (const el of errorEls) {
+        if (el && el.offsetHeight) h += el.offsetHeight;
+    }
+
     return h;
 }
 
 // Apply provider/row visibility from current settings, then resize the window.
 function applyVisibility() {
     const settings = window._cachedSettings || {};
-    const P = settings.providers || { claude: true, codex: false, openrouter: false };
-    const VR = settings.visibleRows || {};
-    const vc = VR.claude || { session: true, weekly: true };
-    const vx = VR.codex || { session: true, weekly: true };
-    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+    const { providers: P, visibleRows } = getProviderPrefs(settings);
+    const vc = visibleRows.claude;
+    const vx = visibleRows.codex;
+    const vo = visibleRows.openrouter;
 
     // Claude
     if (elements.claudeSection) elements.claudeSection.style.display = P.claude ? 'block' : 'none';
@@ -1019,10 +1110,13 @@ function applyVisibility() {
     if (elements.compactCollapseBtn && !isCompactMode) {
         elements.compactCollapseBtn.style.display = P.claude ? 'flex' : 'none';
     }
-    // The expand toggle relates to Claude's extended data; hide it when Claude
-    // is off (buildExtraRows, which normally controls it, won't run).
-    if (!P.claude && elements.expandToggle) {
-        elements.expandToggle.style.display = 'none';
+    // The expand toggle relates to Claude's extended data. Hide it when Claude
+    // is off; when Claude is on, restore it based on whether extra rows exist
+    // (mirroring buildExtraRows' rule) so re-enabling Claude brings it back.
+    if (elements.expandToggle) {
+        elements.expandToggle.style.display = P.claude
+            ? (elements.extraRows.children.length > 0 ? 'flex' : 'none')
+            : 'none';
     }
 
     if (!isCompactMode) resizeWidget();
@@ -1284,6 +1378,10 @@ function resizeWidget(bannerVisible) {
     // --- AI Usage: multi-provider --- base height now depends on enabled providers/rows
     const baseHeight = computeCollapsedHeight();
     const totalHeight = baseHeight + expandedOffset + graphOffset + bannerOffset;
+    // Skip the IPC round-trip when the height hasn't actually changed — collapses
+    // the redundant resizes that fire per fetch/settings/visibility cycle.
+    if (totalHeight === _lastSentHeight) return;
+    _lastSentHeight = totalHeight;
     // --- end AI Usage ---
     window.electronAPI.resizeWindow(totalHeight);
 }
@@ -1375,6 +1473,9 @@ function checkUsageAlerts(data) {
 // Apply or remove compact mode — switches view, resizes window, syncs all toggles
 function applyCompactMode(compact) {
     isCompactMode = compact;
+    // --- AI Usage: multi-provider --- compact toggling resizes the window out-of-band
+    // (set-compact-mode); reset the widget memo so the follow-up resizeWidget() re-sends.
+    _lastSentHeight = -1;
 
     // Add/remove compact-mode class from body for CSS styling
     if (compact) {
@@ -1745,6 +1846,8 @@ function showLoginRequired() {
     // Resize window to fit login content — without this the window stays at
     // the default 155px widget height and the "Log in"/"Manual" buttons are
     // clipped off-screen and unreachable on a frameless, non-resizable window.
+    // --- AI Usage: multi-provider --- direct resize bypasses the widget memo; reset it.
+    _lastSentHeight = -1;
     window.electronAPI.resizeWindow(360);
 }
 
@@ -2097,11 +2200,10 @@ async function loadSettings() {
     });
 
     // --- AI Usage: multi-provider --- populate provider toggles, row checkboxes, statuses
-    const P = settings.providers || { claude: true, codex: false, openrouter: false };
-    const VR = settings.visibleRows || {};
-    const vc = VR.claude || { session: true, weekly: true };
-    const vx = VR.codex || { session: true, weekly: true };
-    const vo = VR.openrouter || { today: true, week: true, month: true, credits: true };
+    const { providers: P, visibleRows } = getProviderPrefs(settings);
+    const vc = visibleRows.claude;
+    const vx = visibleRows.codex;
+    const vo = visibleRows.openrouter;
 
     if (elements.providerClaudeToggle) elements.providerClaudeToggle.checked = !!P.claude;
     if (elements.providerCodexToggle) elements.providerCodexToggle.checked = !!P.codex;
@@ -2192,7 +2294,7 @@ async function saveSettings() {
     // --- AI Usage: multi-provider ---
     // If OpenRouter was just enabled and has no data yet, clear the throttle so
     // the post-close refresh fetches it right away.
-    if (settings.providers.openrouter && !latestOpenRouterData) {
+    if (settings.providers.openrouter && !openRouterFetched) {
         lastOpenRouterFetch = 0;
     }
     // --- end AI Usage ---

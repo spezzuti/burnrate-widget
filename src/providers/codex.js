@@ -144,12 +144,19 @@ function extractPercent(win) {
     if (typeof candidate === 'number' && Number.isFinite(candidate)) {
       return candidate;
     }
+    // Accept numeric strings (e.g. "42.5") from accounts that stringify fields.
+    if (typeof candidate === 'string' && candidate.trim() !== '' && Number.isFinite(Number(candidate))) {
+      return Number(candidate);
+    }
   }
 
   const leftCandidates = [win.percent_left, win.remaining_percent];
   for (const candidate of leftCandidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate)) {
       return 100 - candidate;
+    }
+    if (typeof candidate === 'string' && candidate.trim() !== '' && Number.isFinite(Number(candidate))) {
+      return 100 - Number(candidate);
     }
   }
 

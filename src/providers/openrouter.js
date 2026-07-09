@@ -5,8 +5,8 @@
 // callers can rely on `ok` to branch instead of wrapping calls in try/catch.
 const https = require('https');
 
-// Debug mode: set DEBUG_LOG=1 env var to see verbose logs (mirrors main.js).
-const DEBUG = process.env.DEBUG_LOG === '1';
+// Debug mode: set DEBUG_LOG=1 env var or pass --debug flag to see verbose logs (mirrors main.js/codex.js).
+const DEBUG = process.env.DEBUG_LOG === '1' || process.argv.includes('--debug');
 function debugLog(...args) {
   if (DEBUG) console.log('[Debug][openrouter]', ...args);
 }

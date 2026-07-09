@@ -742,6 +742,17 @@ function updateTrayIcon(usageData) {
       } catch (_) {}
       weeklyTray = null;
     }
+    // --- AI Usage: multi-provider ---
+    // Reset the surviving sessionTray to its plain (non-stat) look so a stale
+    // percentage badge drawn on a previous cycle doesn't persist.
+    if (sessionTray && !sessionTray.isDestroyed()) {
+      try {
+        const staticIconPath = path.join(__dirname, process.platform === 'darwin' ? 'assets/tray-icon-mac.png' : process.platform === 'linux' ? 'assets/tray-icon-linux.png' : 'assets/tray-icon.png');
+        sessionTray.setImage(staticIconPath);
+        sessionTray.setToolTip('AI Usage');
+      } catch (_) {}
+    }
+    // --- end AI Usage ---
     return;
   }
 
