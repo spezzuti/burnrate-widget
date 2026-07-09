@@ -8,8 +8,8 @@ const { fetchOpenRouter } = require('./src/providers/openrouter');
 const { fetchCodex, getCodexAuthStatus } = require('./src/providers/codex');
 // --- end AI Usage ---
 
-const GITHUB_OWNER = 'SlavomirDurej';
-const GITHUB_REPO = 'claude-usage-widget';
+const GITHUB_OWNER = 'spezzuti';
+const GITHUB_REPO = 'burnrate-widget';
 
 // Migration: Handle old encrypted config files from v1.7.0 and earlier
 // Must happen BEFORE creating Store instance to prevent parse errors

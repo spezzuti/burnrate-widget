@@ -509,10 +509,10 @@ function setupEventListeners() {
         resizeWidget();
     });
     elements.updateBannerText.addEventListener('click', () => {
-        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
+        window.electronAPI.openExternal(`https://github.com/spezzuti/burnrate-widget/releases/latest`);
     });
     elements.settingsUpdateLink.addEventListener('click', () => {
-        window.electronAPI.openExternal(`https://github.com/SlavomirDurej/claude-usage-widget/releases/latest`);
+        window.electronAPI.openExternal(`https://github.com/spezzuti/burnrate-widget/releases/latest`);
     });
 
     // Compact mode — collapse chevron (normal → compact)
