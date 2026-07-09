@@ -273,26 +273,8 @@
                 <button class="compact-expand-btn" id="compactExpandBtn" title="Normal mode">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
                 </button>
-                <div class="compact-rows">
-                    <div class="compact-row">
-                        <span class="compact-label">Session</span>
-                        <div class="compact-bar-wrap">
-                            <div class="compact-bar-bg">
-                                <div class="compact-bar-fill" id="compactSessionFill" style="width: 0%"></div>
-                                <span class="compact-pct" id="compactSessionPct">0%</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="compact-row">
-                        <span class="compact-label">Weekly</span>
-                        <div class="compact-bar-wrap">
-                            <div class="compact-bar-bg">
-                                <div class="compact-bar-fill weekly" id="compactWeeklyFill" style="width: 0%"></div>
-                                <span class="compact-pct" id="compactWeeklyPct">0%</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <!-- AI Usage: multi-provider — compact rows are built dynamically per enabled provider -->
+                <div class="compact-rows" id="compactRows"></div>
             </div>
 
             <!-- Settings Overlay (normal mode) -->

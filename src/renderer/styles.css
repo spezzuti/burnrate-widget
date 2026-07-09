@@ -1442,8 +1442,26 @@ body.compact-mode .title {
 .compact-rows {
     display: flex;
     flex-direction: column;
-    gap: 7px;
+    gap: 10px;  /* --- AI Usage: multi-provider --- gap between provider blocks */
     width: 100%;
+}
+
+/* --- AI Usage: multi-provider --- one provider's stacked rows */
+.compact-block {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;  /* preserves the original inter-row spacing (Claude-only stays pixel-identical) */
+    width: 100%;
+}
+
+/* --- AI Usage: multi-provider --- subtle provider heading above a block */
+.compact-provider-label {
+    color: #6a6a78;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    line-height: 12px;
 }
 
 .compact-row {
@@ -1496,6 +1514,11 @@ body.compact-mode .title {
     background: linear-gradient(90deg, #ef4444 0%, #f87171 100%);
 }
 
+/* --- AI Usage: multi-provider --- OpenRouter credits-remaining fill (green = money left) */
+.compact-bar-fill.or {
+    background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
+}
+
 .compact-pct {
     position: absolute;
     left: 50%;
@@ -1536,6 +1559,10 @@ body.theme-light .compact-expand-btn:hover {
 
 body.theme-light .compact-label {
     color: #606080;
+}
+
+body.theme-light .compact-provider-label {
+    color: #9090a0;
 }
 
 body.theme-light .compact-bar-bg {

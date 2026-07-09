@@ -31,8 +31,24 @@ let lastOpenRouterFetch = 0;
 let latestCodexData = null;
 let openRouterFetched = false;   // true once OpenRouter has returned any result this session
 let codexAuthPresent = false;
+// Last OpenRouter result — stored so the compact view can render credits without
+// re-fetching (renderOpenRouter is the only place OR data lands in the renderer).
+let latestOpenRouterData = null;
 // Last window height sent to the main process; used to skip redundant resize IPC.
 let _lastSentHeight = -1;
+// Compact-mode height memo — mirrors _lastSentHeight for the compact sizing path.
+let _lastCompactHeight = -1;
+
+// Compact-mode layout constants. Calibrated so a single two-bar provider (the
+// classic Claude-only view) resolves to exactly 105px, preserving the original
+// compact window height pixel-for-pixel. Height =
+//   COMPACT_BASE + Σ(block heights) + COMPACT_BLOCK_GAP*(blocks-1)
+// where a block adds COMPACT_LABEL when a provider heading is shown.
+const COMPACT_BASE = 70;        // title bar (36) + content padding (12) + centering slack (22)
+const COMPACT_BLOCK_GAP = 10;   // vertical gap between provider blocks (.compact-rows gap)
+const COMPACT_TWO_BAR = 35;     // two bars (14 each) + inner gap (7)
+const COMPACT_OR_LINE = 14;     // single credits line
+const COMPACT_LABEL = 19;       // provider heading line (12) + block gap to first row (7)
 // --- end AI Usage ---
 
 // Debug logging — only shows in DevTools (development mode).
@@ -114,10 +130,8 @@ const elements = {
     compactContent: document.getElementById('compactContent'),
     compactCollapseBtn: document.getElementById('compactCollapseBtn'),
     compactExpandBtn: document.getElementById('compactExpandBtn'),
-    compactSessionFill: document.getElementById('compactSessionFill'),
-    compactSessionPct: document.getElementById('compactSessionPct'),
-    compactWeeklyFill: document.getElementById('compactWeeklyFill'),
-    compactWeeklyPct: document.getElementById('compactWeeklyPct'),
+    // --- AI Usage: multi-provider --- compact rows are now built dynamically into this container
+    compactRows: document.getElementById('compactRows'),
     compactSettingsOverlay: document.getElementById('compactSettingsOverlay'),
     closeCompactSettingsBtn: document.getElementById('closeCompactSettingsBtn'),
 
@@ -425,7 +439,11 @@ function setupEventListeners() {
         if (_settingsOpenedFromCompact) {
             _settingsOpenedFromCompact = false;
             if (isCompactMode) {
-                window.electronAPI.setCompactMode(true);
+                // Settings temporarily expanded the window to normal size; rebuild
+                // and re-size the compact view. Invalidate the memo so the width
+                // (reset to normal above) is re-applied even if the height is unchanged.
+                _lastCompactHeight = -1;
+                renderCompact();
             }
             // else: applyVisibility() already resized the normal-mode window.
         }
@@ -641,8 +659,9 @@ function sizeSettingsWindow() {
     const overlay = elements.settingsOverlay;
     if (!overlay || overlay.style.display === 'none') return;
     // Settings sizes the window out-of-band from the widget layout; reset the
-    // widget resize memo so the next resizeWidget() always re-sends.
+    // widget + compact resize memos so the next sizing pass always re-sends.
     _lastSentHeight = -1;
+    _lastCompactHeight = -1;
     const header = overlay.querySelector('.settings-header');
     const disc = overlay.querySelector('.settings-disclaimer');
     const rows = overlay.querySelector('.settings-rows');
@@ -877,6 +896,8 @@ async function fetchUsageData(options = {}) {
 
         // One layout pass + at most one countdown restart for the whole cycle.
         applyVisibility();
+        // Refresh the compact view with every enabled provider's latest data.
+        if (isCompactMode) renderCompact();
         if (!countdownStarted) startCountdown(); // updateUI() may already have
     } finally {
         isFetching = false;
@@ -994,6 +1015,7 @@ function openRouterFriendlyMessage(data) {
 
 function renderOpenRouter(data) {
     openRouterFetched = true;
+    latestOpenRouterData = data; // --- AI Usage: multi-provider --- keep for compact render
 
     if (!data || !data.ok) {
         elements.openrouterError.textContent = openRouterFriendlyMessage(data);
@@ -1106,9 +1128,11 @@ function applyVisibility() {
     const allOff = !P.claude && !P.codex && !P.openrouter;
     if (elements.allHiddenPlaceholder) elements.allHiddenPlaceholder.style.display = allOff ? 'block' : 'none';
 
-    // Compact mode is Claude-only — hide its chevron when Claude is disabled.
+    // Compact mode is multi-provider now — show its chevron whenever ANY provider
+    // is enabled; hide it only when every provider is off.
+    const anyProviderEnabled = P.claude || P.codex || P.openrouter;
     if (elements.compactCollapseBtn && !isCompactMode) {
-        elements.compactCollapseBtn.style.display = P.claude ? 'flex' : 'none';
+        elements.compactCollapseBtn.style.display = anyProviderEnabled ? 'flex' : 'none';
     }
     // The expand toggle relates to Claude's extended data. Hide it when Claude
     // is off; when Claude is on, restore it based on whether extra rows exist
@@ -1403,8 +1427,9 @@ function updateUI(data) {
         loadChart();
     }
 
-    // Update compact bars in parallel if compact mode is active
-    if (isCompactMode) updateCompactBars(data);
+    // Update compact view in parallel if compact mode is active
+    // --- AI Usage: multi-provider --- renderCompact() pulls all provider state
+    if (isCompactMode) renderCompact();
 
     // On first load, seed alert flags so we don't fire for thresholds
     // the user can already see when the app starts
@@ -1474,8 +1499,9 @@ function checkUsageAlerts(data) {
 function applyCompactMode(compact) {
     isCompactMode = compact;
     // --- AI Usage: multi-provider --- compact toggling resizes the window out-of-band
-    // (set-compact-mode); reset the widget memo so the follow-up resizeWidget() re-sends.
+    // (set-compact-mode); reset both memos so the follow-up sizing pass re-sends.
     _lastSentHeight = -1;
+    _lastCompactHeight = -1;
 
     // Add/remove compact-mode class from body for CSS styling
     if (compact) {
@@ -1519,40 +1545,184 @@ function applyCompactMode(compact) {
         elements.graphBtn.style.display = compact ? 'none' : '';
     }
 
-    // Tell main process to resize the window width
-    window.electronAPI.setCompactMode(compact);
+    // Tell main process to resize the window. In compact mode renderCompact()
+    // computes the dynamic height and issues the resize; in normal mode we just
+    // restore the widget dimensions here.
+    if (!compact) window.electronAPI.setCompactMode(false);
 
     // Sync both settings toggles
     if (elements.compactModeToggle) elements.compactModeToggle.checked = compact;
     if (elements.compactModeToggleCompact) elements.compactModeToggleCompact.checked = compact;
 
-    // Update compact bars if we have data
-    if (compact && latestUsageData) updateCompactBars(latestUsageData);
+    // Build + size the compact view (works even with no data yet — shows "—").
+    if (compact) renderCompact();
     if (!compact) resizeWidget();
 
     // Persist graph/expanded state changes caused by compact mode toggle
     _saveViewState();
 }
 
-// Update the compact mode progress bars
-function updateCompactBars(data) {
-    const sessionPct = Math.min(Math.max(data.five_hour?.utilization || 0, 0), 100);
-    const weeklyPct = Math.min(Math.max(data.seven_day?.utilization || 0, 0), 100);
+// --- AI Usage: multi-provider ---
+// Build one utilization bar row (label + filled bar + centred readout) into a
+// provider block. `util` is a 0-100 number or null/undefined for "no data yet".
+// `weekly` selects the blue weekly gradient; thresholds match the normal view.
+function appendCompactBarRow(block, label, util, weekly) {
+    const row = document.createElement('div');
+    row.className = 'compact-row';
 
-    elements.compactSessionFill.style.width = `${sessionPct}%`;
-    elements.compactSessionPct.textContent = `${Math.round(sessionPct)}%`;
-    elements.compactWeeklyFill.style.width = `${weeklyPct}%`;
-    elements.compactWeeklyPct.textContent = `${Math.round(weeklyPct)}%`;
+    const lbl = document.createElement('span');
+    lbl.className = 'compact-label';
+    lbl.textContent = label;
+    row.appendChild(lbl);
 
-    // Apply warning/danger classes to compact bars
-    elements.compactSessionFill.className = 'compact-bar-fill';
-    if (sessionPct >= dangerThreshold) elements.compactSessionFill.classList.add('danger');
-    else if (sessionPct >= warnThreshold) elements.compactSessionFill.classList.add('warning');
+    const wrap = document.createElement('div');
+    wrap.className = 'compact-bar-wrap';
+    const bg = document.createElement('div');
+    bg.className = 'compact-bar-bg';
 
-    elements.compactWeeklyFill.className = 'compact-bar-fill weekly';
-    if (weeklyPct >= dangerThreshold) elements.compactWeeklyFill.classList.add('danger');
-    else if (weeklyPct >= warnThreshold) elements.compactWeeklyFill.classList.add('warning');
+    const fill = document.createElement('div');
+    fill.className = 'compact-bar-fill' + (weekly ? ' weekly' : '');
+    const pct = document.createElement('span');
+    pct.className = 'compact-pct';
+
+    const hasData = util !== undefined && util !== null && !Number.isNaN(Number(util));
+    if (hasData) {
+        const p = Math.min(Math.max(Number(util), 0), 100);
+        fill.style.width = `${p}%`;
+        pct.textContent = `${Math.round(p)}%`;
+        if (p >= dangerThreshold) fill.classList.add('danger');
+        else if (p >= warnThreshold) fill.classList.add('warning');
+    } else {
+        fill.style.width = '0%';
+        pct.textContent = '—';
+    }
+
+    bg.appendChild(fill);
+    bg.appendChild(pct);
+    wrap.appendChild(bg);
+    row.appendChild(wrap);
+    block.appendChild(row);
 }
+
+// Build a two-bar provider block (Claude / Codex). `session`/`weekly` are the
+// { utilization, resets_at } objects (or null). Returns the block element.
+function buildCompactTwoBarBlock(labelText, showLabel, session, weekly) {
+    const block = document.createElement('div');
+    block.className = 'compact-block';
+    if (showLabel) {
+        const heading = document.createElement('div');
+        heading.className = 'compact-provider-label';
+        heading.textContent = labelText;
+        block.appendChild(heading);
+    }
+    appendCompactBarRow(block, 'Session', session ? session.utilization : null, false);
+    appendCompactBarRow(block, 'Weekly', weekly ? weekly.utilization : null, true);
+    return block;
+}
+
+// Build the single-line OpenRouter block: a subtle "credits remaining" bar
+// (fill = remaining/total when total is known) with the dollar amount overlaid.
+function buildCompactOpenRouterBlock(showLabel) {
+    const block = document.createElement('div');
+    block.className = 'compact-block';
+    if (showLabel) {
+        const heading = document.createElement('div');
+        heading.className = 'compact-provider-label';
+        heading.textContent = 'OPENROUTER';
+        block.appendChild(heading);
+    }
+
+    const row = document.createElement('div');
+    row.className = 'compact-row';
+    const lbl = document.createElement('span');
+    lbl.className = 'compact-label';
+    lbl.textContent = 'Credits';
+    row.appendChild(lbl);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'compact-bar-wrap';
+    const bg = document.createElement('div');
+    bg.className = 'compact-bar-bg';
+    const fill = document.createElement('div');
+    fill.className = 'compact-bar-fill or';
+    const pct = document.createElement('span');
+    pct.className = 'compact-pct';
+
+    const d = latestOpenRouterData;
+    const credits = (d && d.ok && d.credits) ? d.credits : null;
+    const remaining = credits ? credits.remaining : null;
+    const total = credits ? credits.total : null;
+    if (remaining !== undefined && remaining !== null && !Number.isNaN(Number(remaining))) {
+        pct.textContent = fmtUSD(remaining);
+        if (total && Number(total) > 0) {
+            const p = Math.min(Math.max((Number(remaining) / Number(total)) * 100, 0), 100);
+            fill.style.width = `${p}%`;
+        } else {
+            fill.style.width = '0%';
+        }
+    } else {
+        pct.textContent = '—';
+        fill.style.width = '0%';
+    }
+
+    bg.appendChild(fill);
+    bg.appendChild(pct);
+    wrap.appendChild(bg);
+    row.appendChild(wrap);
+    block.appendChild(row);
+    return block;
+}
+
+// Render the compact view for every enabled provider, then resize the compact
+// window to fit. Reads module state (latestUsageData / latestCodexData /
+// latestOpenRouterData) so it can be called from any fetch/toggle path.
+function renderCompact() {
+    if (!isCompactMode || !elements.compactRows) return;
+
+    const settings = window._cachedSettings || {};
+    const { providers: P } = getProviderPrefs(settings);
+
+    // Ordered list of enabled providers; the heading is shown only when more than
+    // one is enabled (a lone provider keeps the original label-free minimal look).
+    const enabled = [];
+    if (P.claude) enabled.push('claude');
+    if (P.codex) enabled.push('codex');
+    if (P.openrouter) enabled.push('openrouter');
+    const showLabels = enabled.length > 1;
+
+    elements.compactRows.innerHTML = '';
+    let height = COMPACT_BASE;
+    enabled.forEach((provider, i) => {
+        if (i > 0) height += COMPACT_BLOCK_GAP;
+        if (provider === 'openrouter') {
+            elements.compactRows.appendChild(buildCompactOpenRouterBlock(showLabels));
+            height += COMPACT_OR_LINE;
+        } else if (provider === 'codex') {
+            const c = latestCodexData && latestCodexData.ok ? latestCodexData : null;
+            elements.compactRows.appendChild(
+                buildCompactTwoBarBlock('CODEX', showLabels, c && c.five_hour, c && c.seven_day)
+            );
+            height += COMPACT_TWO_BAR;
+        } else {
+            const u = latestUsageData;
+            elements.compactRows.appendChild(
+                buildCompactTwoBarBlock('CLAUDE', showLabels, u && u.five_hour, u && u.seven_day)
+            );
+            height += COMPACT_TWO_BAR;
+        }
+        if (showLabels) height += COMPACT_LABEL;
+    });
+
+    // No provider enabled — nothing to show; fall back to the base chrome height.
+    // (The compact chevron is hidden in this case, so this is an edge state.)
+    if (enabled.length === 0) height = COMPACT_BASE;
+
+    if (height !== _lastCompactHeight) {
+        _lastCompactHeight = height;
+        window.electronAPI.setCompactMode(true, height);
+    }
+}
+// --- end AI Usage ---
 // Persist compact mode setting without touching the rest of settings — debounced
 let _saveCompactTimer = null;
 async function _saveCompactSetting(compact) {
@@ -1846,8 +2016,9 @@ function showLoginRequired() {
     // Resize window to fit login content — without this the window stays at
     // the default 155px widget height and the "Log in"/"Manual" buttons are
     // clipped off-screen and unreachable on a frameless, non-resizable window.
-    // --- AI Usage: multi-provider --- direct resize bypasses the widget memo; reset it.
+    // --- AI Usage: multi-provider --- direct resize bypasses the memos; reset them.
     _lastSentHeight = -1;
+    _lastCompactHeight = -1;
     window.electronAPI.resizeWindow(360);
 }
 

@@ -84,5 +84,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showNotification: (title, body) => ipcRenderer.send('show-notification', { title, body }),
 
   // Compact mode
-  setCompactMode: (compact) => ipcRenderer.send('set-compact-mode', compact)
+  // --- AI Usage: multi-provider --- optional height for the dynamic multi-provider compact view
+  setCompactMode: (compact, height) => ipcRenderer.send('set-compact-mode', compact, height)
 });

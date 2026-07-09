@@ -1081,14 +1081,21 @@ ipcMain.on('show-notification', (event, { title, body }) => {
 
 // Resize window for compact vs normal mode
 // Compact: 290px wide, normal: 530px wide. Height stays managed by renderer.
-ipcMain.on('set-compact-mode', (event, compact) => {
+// --- AI Usage: multi-provider ---
+// Compact height is now dynamic — the renderer computes it from the enabled
+// providers and passes it here. When no height is supplied we fall back to the
+// original 105px so a single-provider (Claude-only) view stays pixel-identical.
+ipcMain.on('set-compact-mode', (event, compact, height) => {
   if (mainWindow) {
     const bounds = mainWindow.getBounds();
     const width = compact ? 290 : WIDGET_WIDTH;
-    const height = compact ? 105 : WIDGET_HEIGHT;
-    mainWindow.setBounds({ x: bounds.x, y: bounds.y, width, height });
+    const h = compact
+      ? (typeof height === 'number' && height > 0 ? Math.round(height) : 105)
+      : WIDGET_HEIGHT;
+    mainWindow.setBounds({ x: bounds.x, y: bounds.y, width, height: h });
   }
 });
+// --- end AI Usage ---
 
 // Settings handlers
 ipcMain.handle('get-settings', () => {
