@@ -1,7 +1,7 @@
 {
-  "name": "claude-usage-widget",
+  "name": "ai-usage-widget",
   "version": "1.7.5",
-  "description": "Desktop widget for Claude.ai usage monitoring",
+  "description": "Desktop widget for AI usage monitoring (Claude, OpenRouter, Codex)",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -15,7 +15,10 @@
     "claude",
     "usage",
     "widget",
-    "electron"
+    "electron",
+    "openrouter",
+    "codex",
+    "openai"
   ],
   "author": "Slavomir Durej",
   "license": "MIT",
@@ -35,8 +38,8 @@
     "electron-store": "^8.1.0"
   },
   "build": {
-    "appId": "com.claudeusage.widget",
-    "productName": "Claude-Usage-Widget",
+    "appId": "com.aiusage.widget",
+    "productName": "AI-Usage",
     "copyright": "Copyright ┬⌐ 2025 Slavomir Durej",
     "publish": null,
     "win": {
@@ -48,7 +51,7 @@
     },
     "portable": {
       "artifactName": "${productName}-${version}-win-portable.${ext}",
-      "unpackDirName": "claude-usage-widget"
+      "unpackDirName": "ai-usage"
     },
     "nsis": {
       "oneClick": false,

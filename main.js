@@ -3,6 +3,10 @@ const path = require('path');
 const https = require('https');
 const Store = require('electron-store');
 const { fetchViaWindow, fetchMultipleViaWindow } = require('./src/fetch-via-window');
+// --- AI Usage: multi-provider ---
+const { fetchOpenRouter } = require('./src/providers/openrouter');
+const { fetchCodex, getCodexAuthStatus } = require('./src/providers/codex');
+// --- end AI Usage ---
 
 const GITHUB_OWNER = 'SlavomirDurej';
 const GITHUB_REPO = 'claude-usage-widget';
@@ -15,12 +19,12 @@ const os = require('os');
 // electron-store uses different paths per platform
 let configPath;
 if (process.platform === 'darwin') {
-  configPath = path.join(os.homedir(), 'Library', 'Application Support', 'claude-usage-widget', 'config.json');
+  configPath = path.join(os.homedir(), 'Library', 'Application Support', 'AI-Usage', 'config.json');
 } else if (process.platform === 'win32') {
-  configPath = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'claude-usage-widget', 'config.json');
+  configPath = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'AI-Usage', 'config.json');
 } else {
   // Linux
-  configPath = path.join(os.homedir(), '.config', 'claude-usage-widget', 'config.json');
+  configPath = path.join(os.homedir(), '.config', 'AI-Usage', 'config.json');
 }
 
 try {
@@ -717,8 +721,14 @@ function formatResetTime(resetsAt, timeFormat, includeDate = false) {
  */
 function updateTrayIcon(usageData) {
   const showTrayStats = store.get('settings.showTrayStats', false);
-  
-  if (!showTrayStats) {
+  // --- AI Usage: multi-provider ---
+  // Tray stat badges are fed by the Claude fetch path. When Claude is disabled
+  // as a provider, reuse the exact showTrayStats-off path below so the badges
+  // are removed while the persistent restore tray icon stays alive.
+  const claudeEnabled = store.get('settings.providers.claude', true);
+  // --- end AI Usage ---
+
+  if (!showTrayStats || !claudeEnabled) {
     // Destroy only weeklyTray, keeping sessionTray alive as a persistent restore
     // icon. Without it, hide() on Windows leaves no way to restore the window.
     // Apply the same Linux appindicator cleanup that destroyTrayIcons() uses.
@@ -854,6 +864,73 @@ ipcMain.handle('delete-credentials', async () => {
   return true;
 });
 
+// --- AI Usage: multi-provider ---
+// Fetch OpenRouter usage/spend using the stored API key. Key retrieval mirrors
+// the get-credentials/fetch-usage-data safeStorage pattern above.
+ipcMain.handle('fetch-openrouter-data', async () => {
+  let apiKey = null;
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = store.get('openRouterApiKey_encrypted');
+    if (encrypted) {
+      try {
+        apiKey = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+      } catch (err) {
+        console.error('[Keychain] Failed to decrypt OpenRouter API key:', err.message);
+      }
+    }
+  } else {
+    apiKey = store.get('openRouterApiKey');
+  }
+
+  if (!apiKey) {
+    return { ok: false, errorKind: 'no-key', error: 'No OpenRouter API key configured' };
+  }
+
+  return await fetchOpenRouter(apiKey);
+});
+
+// Fetch Codex (ChatGPT subscription) usage. The provider reads its own OAuth
+// tokens from ~/.codex/auth.json, so no key handling is needed here.
+ipcMain.handle('fetch-codex-data', async () => {
+  return await fetchCodex();
+});
+
+// Save the OpenRouter API key. Encrypts via safeStorage when available,
+// mirroring the save-credentials sessionKey path.
+ipcMain.handle('save-openrouter-key', (event, key) => {
+  if (typeof key !== 'string' || key.trim().length === 0) {
+    return { success: false, error: 'API key must be a non-empty string' };
+  }
+  const apiKey = key.trim();
+  if (safeStorage.isEncryptionAvailable()) {
+    const encrypted = safeStorage.encryptString(apiKey);
+    store.set('openRouterApiKey_encrypted', encrypted.toString('base64'));
+    store.delete('openRouterApiKey'); // Remove legacy plain storage
+  } else {
+    store.set('openRouterApiKey', apiKey);
+  }
+  return { success: true };
+});
+
+// Report whether an OpenRouter API key is stored. NEVER returns the key itself.
+ipcMain.handle('get-openrouter-key-status', () => {
+  const present = !!(store.get('openRouterApiKey_encrypted') || store.get('openRouterApiKey'));
+  return { present };
+});
+
+// Delete any stored OpenRouter API key (both encrypted and legacy plain).
+ipcMain.handle('delete-openrouter-key', () => {
+  store.delete('openRouterApiKey_encrypted');
+  store.delete('openRouterApiKey');
+  return { success: true };
+});
+
+// Report whether Codex CLI credentials are present on disk.
+ipcMain.handle('get-codex-status', () => {
+  return getCodexAuthStatus();
+});
+// --- end AI Usage ---
+
 // Validate a sessionKey by fetching org ID via hidden BrowserWindow
 ipcMain.handle('validate-session-key', async (event, sessionKey) => {
   debugLog('Validating session key:', sessionKey.substring(0, 20) + '...');
@@ -952,7 +1029,8 @@ ipcMain.handle('set-window-position', (event, { x, y }) => {
 
 ipcMain.on('open-external', (event, url) => {
   // Trust boundary enforcement: duplicate allowlist check in main process
-  const allowedDomains = ['claude.ai', 'github.com', 'paypal.me'];
+  // --- AI Usage: multi-provider --- added 'openrouter.ai'
+  const allowedDomains = ['claude.ai', 'github.com', 'paypal.me', 'openrouter.ai'];
   try {
     const parsedUrl = new URL(url);
     const isAllowed = allowedDomains.some(domain => 
@@ -1017,7 +1095,15 @@ ipcMain.handle('get-settings', () => {
     refreshInterval: store.get('settings.refreshInterval', '300'),
     graphVisible: store.get('settings.graphVisible', false),
     expandedOpen: store.get('settings.expandedOpen', false),
-    showTrayStats: store.get('settings.showTrayStats', false)
+    showTrayStats: store.get('settings.showTrayStats', false),
+    // --- AI Usage: multi-provider ---
+    providers: store.get('settings.providers', { claude: true, codex: false, openrouter: false }),
+    visibleRows: store.get('settings.visibleRows', {
+      claude: { session: true, weekly: true },
+      codex: { session: true, weekly: true },
+      openrouter: { today: true, week: true, month: true, credits: true }
+    })
+    // --- end AI Usage ---
   };
 });
 
@@ -1039,6 +1125,18 @@ ipcMain.handle('save-settings', (event, settings) => {
   store.set('settings.graphVisible', settings.graphVisible);
   store.set('settings.expandedOpen', settings.expandedOpen);
   store.set('settings.showTrayStats', settings.showTrayStats);
+
+  // --- AI Usage: multi-provider ---
+  // Persist the nested provider/visibleRows objects whole (matching the
+  // per-key save mechanism above). Guarded so an older renderer that omits
+  // these keys doesn't wipe the stored defaults.
+  if (settings.providers !== undefined) {
+    store.set('settings.providers', settings.providers);
+  }
+  if (settings.visibleRows !== undefined) {
+    store.set('settings.visibleRows', settings.visibleRows);
+  }
+  // --- end AI Usage ---
 
   const isPortable = process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE;
 
@@ -1188,7 +1286,7 @@ ipcMain.handle('check-for-update', () => {
       path: `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`,
       method: 'GET',
       headers: {
-        'User-Agent': 'claude-usage-widget',
+        'User-Agent': 'ai-usage-widget',
         'Accept': 'application/vnd.github+json'
       },
       timeout: 5000

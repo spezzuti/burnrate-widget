@@ -4,7 +4,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 const ALLOWED_EXTERNAL_DOMAINS = [
   'claude.ai',
   'github.com',
-  'paypal.me'
+  'paypal.me',
+  // --- AI Usage: multi-provider ---
+  'openrouter.ai'
+  // --- end AI Usage ---
 ];
 
 function isAllowedExternalUrl(url) {
@@ -47,6 +50,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // API
   fetchUsageData: () => ipcRenderer.invoke('fetch-usage-data'),
   getUsageHistory: () => ipcRenderer.invoke('get-usage-history'),
+
+  // --- AI Usage: multi-provider ---
+  fetchOpenRouterData: () => ipcRenderer.invoke('fetch-openrouter-data'),
+  fetchCodexData: () => ipcRenderer.invoke('fetch-codex-data'),
+  saveOpenRouterKey: (key) => ipcRenderer.invoke('save-openrouter-key', key),
+  getOpenRouterKeyStatus: () => ipcRenderer.invoke('get-openrouter-key-status'),
+  deleteOpenRouterKey: () => ipcRenderer.invoke('delete-openrouter-key'),
+  getCodexStatus: () => ipcRenderer.invoke('get-codex-status'),
+  // --- end AI Usage ---
+
   openExternal: (url) => {
     if (isAllowedExternalUrl(url)) {
       ipcRenderer.send('open-external', url);
