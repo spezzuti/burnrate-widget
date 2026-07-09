@@ -1125,7 +1125,8 @@ ipcMain.handle('get-settings', () => {
     // --- AI Usage: multi-provider ---
     providers: store.get('settings.providers', { claude: true, codex: false, openrouter: false }),
     visibleRows: store.get('settings.visibleRows', {
-      claude: { session: true, weekly: true },
+      claude: { session: true, weekly: true, fable: true }, // --- AI Usage: multi-provider --- fable pinned row default
+
       codex: { session: true, weekly: true },
       openrouter: { today: true, week: true, month: true, credits: true }
     })

@@ -171,6 +171,28 @@
                     <div class="timer-text" id="weeklyTimeText">--:--</div>
                     <div class="resets-at-text" id="weeklyResetsAt">--</div>
                 </div>
+
+                <!-- --- AI Usage: multi-provider --- Pinned Fable row (cloned from Weekly; shown only when scoped Fable data is present) -->
+                <div class="usage-section" id="claudeFableRow" style="display: none;">
+                    <span class="usage-label">Fable</span>
+                    <div class="usage-bar-group">
+                        <div class="progress-bar">
+                            <div class="progress-fill weekly" id="claudeFableProgress" style="width: 0%"></div>
+                        </div>
+                        <span class="usage-percentage" id="claudeFablePercentage">0%</span>
+                    </div>
+                    <div class="usage-elapsed-group">
+                        <svg class="mini-timer" width="24" height="24" viewBox="0 0 24 24">
+                            <circle class="timer-bg" cx="12" cy="12" r="10" />
+                            <circle class="timer-progress weekly" id="claudeFableTimer" cx="12" cy="12" r="10"
+                                style="stroke-dasharray: 63; stroke-dashoffset: 63" />
+                        </svg>
+                    </div>
+                    <div class="timer-text" id="claudeFableTimeText">--:--</div>
+                    <div class="resets-at-text" id="claudeFableResetsAt">--</div>
+                </div>
+                <!-- --- end AI Usage --- -->
+
                 <!-- AI Usage: multi-provider — Claude section error line (click to reach login) -->
                 <div class="provider-error" id="claudeError" style="display: none; cursor: pointer;"></div>
                 </div>
@@ -444,6 +466,8 @@
                                 <span class="provider-sub-label">Claude rows</span>
                                 <label class="row-check"><input type="checkbox" id="claudeRowSession"><span>Session</span></label>
                                 <label class="row-check"><input type="checkbox" id="claudeRowWeekly"><span>Weekly</span></label>
+                                <!-- --- AI Usage: multi-provider --- -->
+                                <label class="row-check"><input type="checkbox" id="claudeRowFable"><span>Fable</span></label>
                             </div>
 
                             <!-- Codex rows + status -->

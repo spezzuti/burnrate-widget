@@ -49,6 +49,15 @@ const COMPACT_BLOCK_GAP = 10;   // vertical gap between provider blocks (.compac
 const COMPACT_TWO_BAR = 35;     // two bars (14 each) + inner gap (7)
 const COMPACT_OR_LINE = 14;     // single credits line
 const COMPACT_LABEL = 19;       // provider heading line (12) + block gap to first row (7)
+
+// Pinned scoped-limit row. The user's plan surfaces a per-model weekly limit
+// (e.g. Fable) that normalizeUsageData registers as a synthetic
+// seven_day_scoped_<slug> key. This single pattern decides which scoped slug is
+// promoted out of the expand panel into a dedicated pinned row under Weekly.
+const PINNED_SCOPED_PATTERN = /fable/i;
+let fableDataPresent = false;   // a scoped row matching PINNED_SCOPED_PATTERN has data this cycle
+let fablePinnedVisible = false; // gated: claude enabled + Fable row shown + fable data present
+let pinnedFableKey = null;      // EXTRA_ROW_CONFIG key currently pinned (excluded from expand panel)
 // --- end AI Usage ---
 
 // Debug logging — only shows in DevTools (development mode).
@@ -89,6 +98,15 @@ const elements = {
     weeklyTimer: document.getElementById('weeklyTimer'),
     weeklyTimeText: document.getElementById('weeklyTimeText'),
     weeklyResetsAt: document.getElementById('weeklyResetsAt'),
+
+    // --- AI Usage: multi-provider --- pinned scoped (Fable) row in the Claude section
+    claudeFableRow: document.getElementById('claudeFableRow'),
+    claudeFableProgress: document.getElementById('claudeFableProgress'),
+    claudeFablePercentage: document.getElementById('claudeFablePercentage'),
+    claudeFableTimer: document.getElementById('claudeFableTimer'),
+    claudeFableTimeText: document.getElementById('claudeFableTimeText'),
+    claudeFableResetsAt: document.getElementById('claudeFableResetsAt'),
+    // --- end AI Usage ---
 
     sessionResetsAt: document.getElementById('sessionResetsAt'),
 
@@ -177,6 +195,7 @@ const elements = {
     openrouterSub: document.getElementById('openrouterSub'),
     claudeRowSession: document.getElementById('claudeRowSession'),
     claudeRowWeekly: document.getElementById('claudeRowWeekly'),
+    claudeRowFable: document.getElementById('claudeRowFable'), // --- AI Usage: multi-provider ---
     codexRowSession: document.getElementById('codexRowSession'),
     codexRowWeekly: document.getElementById('codexRowWeekly'),
     codexStatusLine: document.getElementById('codexStatusLine'),
@@ -209,7 +228,7 @@ function getProviderPrefs(settings) {
     const providers = s.providers || { claude: true, codex: false, openrouter: false };
     const VR = s.visibleRows || {};
     const visibleRows = {
-        claude: VR.claude || { session: true, weekly: true },
+        claude: VR.claude || { session: true, weekly: true, fable: true }, // --- AI Usage: multi-provider --- fable default
         codex: VR.codex || { session: true, weekly: true },
         openrouter: VR.openrouter || { today: true, week: true, month: true, credits: true }
     };
@@ -1066,6 +1085,9 @@ function computeCollapsedHeight() {
         h = WIDGET_HEIGHT_COLLAPSED;
         if (!vc.session) h -= CLAUDE_ROW_HEIGHT;
         if (!vc.weekly) h -= CLAUDE_ROW_HEIGHT;
+        // --- AI Usage: multi-provider --- the 155 anchor covers only session+weekly;
+        // the pinned Fable row is additive when its data is present and it's enabled.
+        if (computeFablePinnedVisible()) h += CLAUDE_ROW_HEIGHT;
     } else {
         // No Claude section and no expand toggle — build up from bare chrome.
         h = CONTENT_CHROME;
@@ -1111,6 +1133,10 @@ function applyVisibility() {
     if (elements.claudeSection) elements.claudeSection.style.display = P.claude ? 'block' : 'none';
     if (claudeSessionRow) claudeSessionRow.style.display = (P.claude && vc.session) ? '' : 'none';
     if (claudeWeeklyRow) claudeWeeklyRow.style.display = (P.claude && vc.weekly) ? '' : 'none';
+    // --- AI Usage: multi-provider --- pinned Fable row: gated on data + checkbox so
+    // it is never force-shown before the first Claude fetch delivers scoped data.
+    fablePinnedVisible = computeFablePinnedVisible();
+    if (elements.claudeFableRow) elements.claudeFableRow.style.display = fablePinnedVisible ? '' : 'none';
 
     // Codex
     if (elements.codexSection) elements.codexSection.style.display = P.codex ? 'block' : 'none';
@@ -1216,6 +1242,9 @@ function buildExtraRows(data) {
     let count = 0;
 
     for (const [key, config] of Object.entries(EXTRA_ROW_CONFIG)) {
+        // --- AI Usage: multi-provider --- the pinned Fable row owns this key; skip
+        // it here so it never renders in both the pinned row and the expand panel.
+        if (fablePinnedVisible && key === pinnedFableKey) continue;
         const value = data[key];
         // extra_usage is valid with utilization OR balance_cents (prepaid only)
         const hasUtilization = value && value.utilization !== undefined;
@@ -1434,10 +1463,74 @@ function normalizeUsageData(data) {
     return data;
 }
 
+// --- AI Usage: multi-provider ---
+// Find the first registered scoped weekly key (seven_day_scoped_<slug>) whose
+// slug matches PINNED_SCOPED_PATTERN and that actually has utilization data.
+function findPinnedFableKey(data) {
+    const prefix = 'seven_day_scoped_';
+    for (const key of Object.keys(EXTRA_ROW_CONFIG)) {
+        if (!key.startsWith(prefix)) continue;
+        const slug = key.slice(prefix.length);
+        if (!PINNED_SCOPED_PATTERN.test(slug)) continue;
+        if (data && data[key] && data[key].utilization !== undefined) return key;
+    }
+    return null;
+}
+
+// Combined gate for the pinned Fable row: Claude enabled AND its row checkbox on
+// AND scoped Fable data actually arrived. Kept as a function so both the height
+// arithmetic and the visibility pass read the same live condition.
+function computeFablePinnedVisible() {
+    const settings = window._cachedSettings || {};
+    const { providers: P, visibleRows } = getProviderPrefs(settings);
+    return !!(P.claude && (visibleRows.claude.fable !== false) && fableDataPresent);
+}
+
+// Populate the pinned Fable row from the scoped weekly limit using the SAME
+// helpers as the Session/Weekly rows (7-day window = 7*24*60 minutes). Also sets
+// the module flags that buildExtraRows / computeCollapsedHeight / applyVisibility
+// read so the row never renders twice and the height stays exact.
+function updatePinnedFableRow(data) {
+    const settings = window._cachedSettings || {};
+    const timeFormat = settings.timeFormat || '12h';
+    const weeklyDateFormat = settings.weeklyDateFormat || 'date';
+
+    const key = findPinnedFableKey(data);
+    pinnedFableKey = key;
+    fableDataPresent = !!key;
+
+    if (key && elements.claudeFableProgress) {
+        const value = data[key];
+        const totalMinutes = 7 * 24 * 60;
+        updateProgressBar(elements.claudeFableProgress, elements.claudeFablePercentage, value.utilization || 0, true);
+        updateTimer(elements.claudeFableTimer, elements.claudeFableTimeText, value.resets_at, totalMinutes);
+        elements.claudeFableTimeText.dataset.resets = value.resets_at || '';
+        elements.claudeFableTimeText.dataset.total = totalMinutes;
+        elements.claudeFableResetsAt.textContent = formatResetsAt(value.resets_at, true, timeFormat, weeklyDateFormat);
+        elements.claudeFableResetsAt.style.opacity = value.resets_at ? '1' : '0.4';
+    }
+
+    fablePinnedVisible = computeFablePinnedVisible();
+    if (elements.claudeFableRow) elements.claudeFableRow.style.display = fablePinnedVisible ? '' : 'none';
+}
+
+// Live-tick the pinned Fable countdown from the shared 30s interval.
+function refreshFableTimer() {
+    if (!fablePinnedVisible) return;
+    const textEl = elements.claudeFableTimeText;
+    const circleEl = elements.claudeFableTimer;
+    if (!textEl || !circleEl) return;
+    const resetsAt = textEl.dataset.resets;
+    const totalMinutes = parseInt(textEl.dataset.total);
+    if (resetsAt && totalMinutes) updateTimer(circleEl, textEl, resetsAt, totalMinutes);
+}
+// --- end AI Usage ---
+
 function updateUI(data) {
     latestUsageData = normalizeUsageData(data);
 
     showMainContent();
+    updatePinnedFableRow(data); // --- AI Usage: multi-provider --- must precede buildExtraRows/resizeWidget
     buildExtraRows(data);
     refreshTimers();
     if (isExpanded) refreshExtraTimers();
@@ -1513,6 +1606,41 @@ function checkUsageAlerts(data) {
             `Weekly Limit usage has reached ${Math.round(weeklyPct)}%`
         );
     }
+
+    // --- AI Usage: multi-provider --- per-model alerts for every extra/scoped row
+    // (Sonnet, Opus, Fable, …). Same warn/danger thresholds and the same
+    // notification cooldown, but deduped per row key so each model tracks its own
+    // crossing. Gated by the shared usageAlerts setting — no separate toggle.
+    for (const key of Object.keys(EXTRA_ROW_CONFIG)) {
+        if (key === 'extra_usage') continue;
+        const entry = data[key];
+        if (!entry || entry.utilization === undefined) continue;
+        const pct = entry.utilization || 0;
+        const label = EXTRA_ROW_CONFIG[key].label;
+        const state = extraAlertFired[key] || (extraAlertFired[key] = { warn: false, danger: false });
+
+        // Reset this row's flags when its window resets (utilization drops low).
+        if (pct < warnThreshold) {
+            state.warn = false;
+            state.danger = false;
+        }
+
+        if (pct >= dangerThreshold && !state.danger) {
+            state.danger = true;
+            state.warn = true; // suppress warn if we jumped straight to danger
+            window.electronAPI.showNotification(
+                `BurnRate — Claude · ${label}`,
+                `${label} usage is at ${Math.round(pct)}% — running low`
+            );
+        } else if (pct >= warnThreshold && !state.warn) {
+            state.warn = true;
+            window.electronAPI.showNotification(
+                `BurnRate — Claude · ${label}`,
+                `${label} usage has reached ${Math.round(pct)}%`
+            );
+        }
+    }
+    // --- end AI Usage ---
 }
 
 // Apply or remove compact mode — switches view, resizes window, syncs all toggles
@@ -1784,6 +1912,13 @@ const alertFired = {
     weekly_danger: false
 };
 
+// --- AI Usage: multi-provider ---
+// Per-model alert dedup state for the extra/scoped rows (Sonnet, Opus, Fable, …).
+// Keyed by EXTRA_ROW_CONFIG key → { warn, danger }, mirroring the scalar
+// session_/weekly_ flags above but scaling to an unbounded set of model rows.
+const extraAlertFired = {};
+// --- end AI Usage ---
+
 // Seed alertFired flags based on current utilization at startup.
 // Any threshold already exceeded when the app launches is treated as already fired,
 // so the user doesn't get a notification for something they can already see.
@@ -1804,6 +1939,23 @@ function seedAlertFlags(data) {
     } else if (weeklyPct >= warnThreshold) {
         alertFired.weekly_warn = true;
     }
+
+    // --- AI Usage: multi-provider --- seed per-model (extra/scoped) row flags too,
+    // so a Fable/Sonnet/Opus limit already exceeded at launch doesn't fire on load.
+    for (const key of Object.keys(EXTRA_ROW_CONFIG)) {
+        if (key === 'extra_usage') continue;
+        const entry = data[key];
+        if (!entry || entry.utilization === undefined) continue;
+        const pct = entry.utilization || 0;
+        const state = extraAlertFired[key] || (extraAlertFired[key] = { warn: false, danger: false });
+        if (pct >= dangerThreshold) {
+            state.danger = true;
+            state.warn = true;
+        } else if (pct >= warnThreshold) {
+            state.warn = true;
+        }
+    }
+    // --- end AI Usage ---
 }
 
 function refreshTimers() {
@@ -1889,6 +2041,7 @@ function startCountdown() {
         refreshTimers();
         if (isExpanded) refreshExtraTimers();
         refreshCodexTimers(); // --- AI Usage: multi-provider ---
+        refreshFableTimer();  // --- AI Usage: multi-provider --- tick pinned Fable countdown
     }, 30000);
 }
 
@@ -2033,6 +2186,10 @@ function showLoginRequired() {
     alertFired.session_danger = false;
     alertFired.weekly_warn = false;
     alertFired.weekly_danger = false;
+    // --- AI Usage: multi-provider --- clear per-model dedup state so a new session
+    // doesn't inherit suppressed (or stale-fired) extra-row alerts.
+    for (const k of Object.keys(extraAlertFired)) delete extraAlertFired[k];
+    // --- end AI Usage ---
     // Resize window to fit login content — without this the window stays at
     // the default 155px widget height and the "Log in"/"Manual" buttons are
     // clipped off-screen and unreachable on a frameless, non-resizable window.
@@ -2402,6 +2559,7 @@ async function loadSettings() {
 
     if (elements.claudeRowSession) elements.claudeRowSession.checked = vc.session !== false;
     if (elements.claudeRowWeekly) elements.claudeRowWeekly.checked = vc.weekly !== false;
+    if (elements.claudeRowFable) elements.claudeRowFable.checked = vc.fable !== false; // --- AI Usage: multi-provider ---
     if (elements.codexRowSession) elements.codexRowSession.checked = vx.session !== false;
     if (elements.codexRowWeekly) elements.codexRowWeekly.checked = vx.weekly !== false;
     if (elements.orRowTodayChk) elements.orRowTodayChk.checked = vo.today !== false;
@@ -2466,7 +2624,8 @@ async function saveSettings() {
         visibleRows: {
             claude: {
                 session: elements.claudeRowSession ? elements.claudeRowSession.checked : true,
-                weekly: elements.claudeRowWeekly ? elements.claudeRowWeekly.checked : true
+                weekly: elements.claudeRowWeekly ? elements.claudeRowWeekly.checked : true,
+                fable: elements.claudeRowFable ? elements.claudeRowFable.checked : true // --- AI Usage: multi-provider ---
             },
             codex: {
                 session: elements.codexRowSession ? elements.codexRowSession.checked : true,
@@ -2499,6 +2658,12 @@ async function saveSettings() {
 
     // Re-render resets-at values immediately with new format
     if (latestUsageData) {
+        // --- AI Usage: multi-provider ---
+        // Recompute the pinned-Fable state from the just-saved settings BEFORE
+        // buildExtraRows, or its skip condition reads the stale flag and Fable
+        // either vanishes or renders twice (pinned + expand panel) until the
+        // next fetch. Also re-renders the Fable resets-at text in the new format.
+        updatePinnedFableRow(latestUsageData);
         refreshTimers();
         // Rebuild extra rows to apply new threshold colors
         if (isExpanded) {
