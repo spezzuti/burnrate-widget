@@ -644,6 +644,12 @@ body.theme-light .graph-btn.active {
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
 }
 
+/* --- AI Usage: multi-provider --- Fable's own teal variant (base color; warn/danger below still take precedence) */
+.progress-fill.fable {
+    background: linear-gradient(90deg, #2dd4bf 0%, #14b8a6 100%);
+    box-shadow: 0 0 10px rgba(20, 184, 166, 0.3);
+}
+
 .progress-fill.extra {
     background: linear-gradient(90deg, #10b981 0%, #34d399 100%);
     box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
@@ -715,6 +721,11 @@ body.theme-light .graph-btn.active {
 
 .timer-progress.weekly {
     stroke: #3b82f6;
+}
+
+/* --- AI Usage: multi-provider --- Fable teal timer stroke (warn/danger below still take precedence) */
+.timer-progress.fable {
+    stroke: #14b8a6;
 }
 
 .timer-progress.extra {
@@ -1504,6 +1515,11 @@ body.compact-mode .title {
 
 .compact-bar-fill.weekly {
     background: linear-gradient(90deg, #3b82f6 0%, #60a5fa 100%);
+}
+
+/* --- AI Usage: multi-provider --- compact Fable bar teal variant (warn/danger below still take precedence) */
+.compact-bar-fill.fable {
+    background: linear-gradient(90deg, #2dd4bf 0%, #14b8a6 100%);
 }
 
 .compact-bar-fill.warning {

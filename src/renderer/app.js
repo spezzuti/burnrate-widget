@@ -47,6 +47,7 @@ let _lastCompactHeight = -1;
 const COMPACT_BASE = 70;        // title bar (36) + content padding (12) + centering slack (22)
 const COMPACT_BLOCK_GAP = 10;   // vertical gap between provider blocks (.compact-rows gap)
 const COMPACT_TWO_BAR = 35;     // two bars (14 each) + inner gap (7)
+const COMPACT_BAR_ROW = 21;     // --- AI Usage: multi-provider --- one extra bar row: bar (14) + block gap (7); adds the pinned Fable bar
 const COMPACT_OR_LINE = 14;     // single credits line
 const COMPACT_LABEL = 19;       // provider heading line (12) + block gap to first row (7)
 
@@ -1714,7 +1715,9 @@ function applyCompactMode(compact) {
 // Build one utilization bar row (label + filled bar + centred readout) into a
 // provider block. `util` is a 0-100 number or null/undefined for "no data yet".
 // `weekly` selects the blue weekly gradient; thresholds match the normal view.
-function appendCompactBarRow(block, label, util, weekly) {
+// `variant` (optional) overrides the base color class (e.g. 'fable' teal); when
+// omitted the weekly/session default is used so existing callers are unchanged.
+function appendCompactBarRow(block, label, util, weekly, variant) {
     const row = document.createElement('div');
     row.className = 'compact-row';
 
@@ -1729,7 +1732,8 @@ function appendCompactBarRow(block, label, util, weekly) {
     bg.className = 'compact-bar-bg';
 
     const fill = document.createElement('div');
-    fill.className = 'compact-bar-fill' + (weekly ? ' weekly' : '');
+    const baseVariant = variant || (weekly ? 'weekly' : '');
+    fill.className = 'compact-bar-fill' + (baseVariant ? ' ' + baseVariant : '');
     const pct = document.createElement('span');
     pct.className = 'compact-pct';
 
@@ -1853,10 +1857,16 @@ function renderCompact() {
             height += COMPACT_TWO_BAR;
         } else {
             const u = latestUsageData;
-            elements.compactRows.appendChild(
-                buildCompactTwoBarBlock('CLAUDE', showLabels, u && u.five_hour, u && u.seven_day)
-            );
+            const block = buildCompactTwoBarBlock('CLAUDE', showLabels, u && u.five_hour, u && u.seven_day);
             height += COMPACT_TWO_BAR;
+            // --- AI Usage: multi-provider --- pinned Fable bar (teal) under Session/Weekly,
+            // gated identically to the pinned row; adds one bar row worth of height.
+            if (computeFablePinnedVisible()) {
+                const fableObj = (u && pinnedFableKey) ? u[pinnedFableKey] : null;
+                appendCompactBarRow(block, 'Fable', fableObj ? fableObj.utilization : null, false, 'fable');
+                height += COMPACT_BAR_ROW;
+            }
+            elements.compactRows.appendChild(block);
         }
         if (showLabels) height += COMPACT_LABEL;
     });
