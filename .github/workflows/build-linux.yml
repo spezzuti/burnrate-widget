@@ -47,14 +47,14 @@ jobs:
       - name: Upload x64 AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Usage-Widget-linux-x64
+          name: BurnRate-linux-x64
           path: dist/*x86_64*.AppImage
           if-no-files-found: error
 
       - name: Upload arm64 AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Usage-Widget-linux-arm64
+          name: BurnRate-linux-arm64
           path: dist/*arm64*.AppImage
           if-no-files-found: error
 

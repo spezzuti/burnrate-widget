@@ -45,14 +45,14 @@ jobs:
       - name: Upload Setup installer
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Usage-Widget-Setup
+          name: BurnRate-Setup
           path: dist/*Setup*.exe
           if-no-files-found: error
 
       - name: Upload Portable executable
         uses: actions/upload-artifact@v4
         with:
-          name: Claude-Usage-Widget-Portable
+          name: BurnRate-Portable
           path: dist/*portable*.exe
           if-no-files-found: error
 
