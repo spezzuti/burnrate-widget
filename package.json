@@ -1,6 +1,6 @@
 {
   "name": "burnrate-widget",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "BurnRate — desktop widget for AI usage monitoring (Claude, Codex, OpenRouter)",
   "main": "main.js",
   "scripts": {
@@ -59,7 +59,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "artifactName": "${productName}-${version}-win-Setup.${ext}"
+      "artifactName": "${productName}-${version}-win-Setup.${ext}",
+      "include": "build/installer.nsh"
     },
     "files": [
       "**/*",

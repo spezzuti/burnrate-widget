@@ -68,6 +68,14 @@ let mainWindow = null;
 let sessionTray = null;  // Tray icon for Session usage
 let weeklyTray = null;   // Tray icon for Weekly usage
 
+// True once a real quit is underway (tray Exit, app.quit(), or OS session
+// shutdown). The window 'close' handler checks this to decide whether to
+// hide-to-tray (normal close while running) or allow the window to actually
+// close (quit in progress). Without it, hide-to-tray would swallow every
+// close — including the ones the NSIS installer/uninstaller and OS shutdown
+// rely on — leaving the process running forever.
+let isQuitting = false;
+
 const WIDGET_WIDTH = process.platform === 'darwin' ? 590 : 560;
 const WIDGET_HEIGHT = 155;
 const HISTORY_RETENTION_DAYS = 8;
@@ -197,6 +205,22 @@ function createMainWindow() {
       const position = mainWindow.getBounds();
       store.set('windowPosition', { x: position.x, y: position.y });
     }, 300);
+  });
+
+  // Hide-to-tray on close when tray stats are enabled, mirroring the
+  // 'close-window' IPC path — but ONLY for a normal user close. When a real
+  // quit is in progress (isQuitting: tray Exit, app.quit(), OS session
+  // shutdown, or the installer/uninstaller force-terminating us) we must let
+  // the window actually close so the process can exit. This handler also
+  // catches native window-close messages (e.g. WM_CLOSE) that don't go
+  // through the renderer's custom close button.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    const showTrayStats = store.get('settings.showTrayStats', false);
+    if (showTrayStats && mainWindow && !mainWindow.isDestroyed()) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -1584,6 +1608,13 @@ app.whenReady().then(async () => {
   }, 5000);
 });
 
+// Mark that a genuine quit is underway so the window 'close' handler stops
+// hiding to tray and lets the window close. Covers app.quit() (tray Exit),
+// and OS-level session shutdown/logoff which fire before-quit.
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     // Keep running in tray
@@ -1606,9 +1637,14 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    // Surface the existing widget instead of doing nothing. The window may be
+    // hidden in the tray (hide-to-tray), so focus() alone is not enough — use
+    // the same clean show path as the tray "Show Widget" item. If the window
+    // was fully closed/destroyed, recreate it.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      showMainWindowClean();
+    } else {
+      createMainWindow();
     }
   });
 }
