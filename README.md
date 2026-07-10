@@ -63,11 +63,11 @@ Each provider is independently toggleable in Settings. Disabling one stops it fr
 
 ### Download a Release
 
-Prebuilt installers aren't published yet for this fork — check the [Releases](../../releases) page, and once builds are available you'll find:
+Grab the latest build from the [Releases](../../releases) page:
 
 - **Windows:** `BurnRate-{version}-win-Setup.exe` (installer) or `BurnRate-{version}-win-portable.exe` (no install needed)
 - **macOS:** `BurnRate-{version}-macOS-arm64.dmg` (Apple Silicon) or `BurnRate-{version}-macOS-x64.dmg` (Intel)
-- **Linux:** `BurnRate-{version}-linux-x64.AppImage` or `BurnRate-{version}-linux-arm64.AppImage`
+- **Linux:** `BurnRate-{version}-linux-x86_64.AppImage` or `BurnRate-{version}-linux-arm64.AppImage`
 
 > **macOS:** if a release isn't notarized, Gatekeeper may show a "damaged or can't be opened" warning. Fix it by running `xattr -cr /Applications/BurnRate.app` in Terminal, then launch again.
 
