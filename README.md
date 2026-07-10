@@ -1,174 +1,96 @@
 # BurnRate
 
-BurnRate is a fork of [claude-usage-widget](https://github.com/SlavomirDurej/claude-usage-widget) by Slavomir Durej (MIT). Adds OpenRouter and OpenAI Codex usage tracking.
+BurnRate is a desktop widget for **Windows, macOS, and Linux** that shows how much of your AI usage you've burned through — in real time, from your system tray.
 
-A beautiful, standalone desktop widget for **Windows, macOS, and Linux** that displays your Claude.ai usage statistics in real-time.
+It's a fork of [claude-usage-widget](https://github.com/SlavomirDurej/claude-usage-widget) by Slavomir Durej (MIT licensed), which tracks Claude.ai usage only. BurnRate keeps everything that widget does for Claude and adds two more providers: **OpenAI Codex** (via your ChatGPT subscription) and **OpenRouter**. Full credit to the original project and its contributors for the widget's core design.
 
-![Claude Usage Widget - Main](assets/screenshot-main.png)
-
----
-
-## Features
-
-🎯 **Real-time Usage Tracking** — Monitor both session and weekly usage limits  
-📊 **Visual Progress Bars** — Clean, gradient progress indicators with configurable warning thresholds  
-⏱️ **Countdown Timers** — Circular timers showing time elapsed in the current session window  
-🔄 **Auto-refresh** — Updates every 5 minutes automatically, with animated refresh indicator  
-📈 **Usage History Graph** — Toggleable 7-day chart showing session and weekly trends over time  
-🌍 **Currency Support** — Extra usage displays your account's billing currency (€, £, $)  
-🎨 **Modern UI** — Sleek, draggable widget with dark and light themes  
-🔒 **Secure** — Encrypted credential storage  
-📍 **Always on Top** — User-controlled, stays visible across all workspaces  
-💾 **System Tray** — Minimizes to tray for easy access  
-⚙️ **Settings Panel** — Persistent preferences for startup, theme, tray, thresholds, and date/time formats  
-🔔 **Usage Alerts** — Desktop notifications when usage crosses configurable warn/danger thresholds  
-🔔 **Update Notifications** — Automatic check for new releases on startup  
-🕐 **Configurable Date & Time Formats** — 12h/24h time, and flexible weekly reset date display  
-📐 **Compact Mode** — Minimal view for when you just need a quick glance  
+![Claude Usage Widget, the original claude-usage-widget UI that BurnRate is built on](assets/screenshot-main.png)
+<sub>This screenshot is from the upstream claude-usage-widget project and predates BurnRate's multi-provider UI, rebrand, and Fable row — kept here as a nod to where the widget started.</sub>
 
 ---
 
-## What's New in v1.7.0
+## Providers
 
-### 🎨 Dynamic Threshold Colors
+Each provider is independently toggleable in Settings. Disabling one stops it from polling entirely.
 
-All usage bars (Session, Weekly, and Extra Usage) now respect your configured warning and danger thresholds:
-- **Green** below warning threshold
-- **Amber** at or above warning threshold
-- **Red** at or above danger threshold
+### Claude (claude.ai)
 
-Changes apply immediately when thresholds are adjusted in Settings.
+- Session (5h) and weekly usage bars with circular countdown timers and reset times
+- Expandable per-model breakdown: Sonnet, Opus, Cowork, Design, and OAuth apps usage, plus extra usage spend/credits
+- 7-day usage history graph
+- Optional tray icons showing live session and weekly percentages (enable "Show tray stats" in Settings)
+- Sign in by logging into claude.ai in an embedded window (the session cookie is captured automatically) or by pasting a session key manually
+- Multi-organization support — if your account belongs to more than one org, a selector appears
+- **Fable**: scoped weekly limits available on some Claude plans are auto-detected and pinned as their own teal row directly under Weekly, with their own show/hide checkbox. Uncheck it and Fable data still appears in the expandable per-model breakdown instead.
 
-### 📈 Usage History Graph
+### OpenAI Codex (ChatGPT subscription)
 
-A toggleable usage history graph now sits below the main widget. Click the graph button in the toolbar to show or hide it.
+- 5-hour and weekly rate-limit windows
+- Zero configuration — reads your existing Codex CLI login from `~/.codex/auth.json`
+- If you're not logged in via the Codex CLI, or the token has expired, the section shows a status line instead of failing
+- Uses an unofficial ChatGPT usage endpoint, so it may break if OpenAI changes it; the widget parses it defensively and won't crash if the shape changes
 
-![Claude Usage Widget - Graph](assets/screenshot-graph.png)
+### OpenRouter
 
-- Displays up to **7 days** of collected usage data points
-- **Data points are captured each time the app refreshes** (every 5 minutes by default when running)
-- History **persists across restarts** — collected data is retained when you close and reopen the app
-- Sonnet and Extra Usage lines appear automatically when those sections are relevant
-- **Adaptive x-axis labels** — shows times for short spans, weekday+hour for medium spans, and dates for longer spans
-- Respects your **12h/24h time format** setting
-- Hover tooltip shows exact timestamp and value
-
-> **Note:** The graph shows usage snapshots captured at each refresh interval while the app is running. Time periods when the app is closed are not represented on the graph.
-
-### 🌍 Currency Support
-The Extra Usage row now displays the correct currency symbol based on your account's billing currency — **€**, **£**, or **$**.
-
-> For full release history, see the [Releases](../../releases) page.
+- Spend today / this week / this month, plus remaining credits
+- Uses your own OpenRouter API key, entered once in Settings
+- Polled at most once per 60 seconds to stay well under any rate limits
 
 ---
 
-## Screenshots
+## Visibility, Compact Mode & Alerts
 
-### Settings Panel
+- **Per-provider toggles** — turn Claude, Codex, or OpenRouter on/off entirely
+- **Per-row checkboxes** — independently show/hide Claude session, weekly, and Fable; Codex session and weekly; OpenRouter today, week, month, and credits
+- The window automatically resizes to fit whatever rows are currently visible
+- **Compact mode** shrinks the widget to a minimal multi-provider view: Claude session/weekly (plus the Fable bar when present), Codex session/weekly, and an OpenRouter credits line. Height adapts to whichever providers you have enabled.
+- **Usage alerts** — desktop notifications when Claude's session, weekly, or any individual model row (Sonnet, Opus, Fable, other scoped limits) crosses your configured warn/danger thresholds
 
-![Claude Usage Widget - Settings](assets/screenshot-settings.png)
+---
 
+## Other Features
 
-### Settings Options
-
-- ⚙️ **Launch at startup** — Auto-start with Windows or macOS login
-- 📌 **Hide from taskbar** — Tray-only mode
-- 🎨 **Theme selector** — Dark / Light / System
-- ⚠️ **Warning thresholds** — Configurable amber and red levels for usage bars
-- 🔔 **Usage alerts** — Desktop notifications at warn/danger thresholds
-- 🕐 **Time format** — 12h or 24h
-- 📅 **Date format** — Controls how the weekly reset date is displayed
-- 📐 **Compact mode** — Minimal two-bar view
+- Always-on-top, autostart at login, minimize to system tray
+- Dark / Light / System themes
+- 12h or 24h time format
+- Configurable refresh interval, from every 15 seconds to every 5 minutes
+- Configurable warning (default 75%) and danger (default 90%) thresholds, applied to every usage bar's color
+- Automatic update check against GitHub Releases on startup
 
 ---
 
 ## Installation
 
-### Download Pre-built Release
+### Download a Release
 
-**Windows:**
-1. Download the latest `Claude-Usage-Widget-{version}-win-Setup.exe` (installer) or `Claude-Usage-Widget-{version}-win-portable.exe` (no install needed) from [Releases](../../releases)
-2. Run the installer or portable exe
-3. Launch "Claude Usage Widget" from the Start Menu (installer) or directly (portable)
-4. **To launch at Windows startup (portable only):** Press `Win+R`, type `shell:startup`, and copy the portable `.exe` into that folder. To update, copy the new version in and delete the old one.
+Prebuilt installers aren't published yet for this fork — check the [Releases](../../releases) page, and once builds are available you'll find:
 
-**macOS:**
-1. Download the latest `Claude-Usage-Widget-{version}-macOS-arm64.dmg` (Apple Silicon) or `Claude-Usage-Widget-{version}-macOS-x64.dmg` (Intel) from [Releases](../../releases)
-2. Open the DMG and drag the app to your Applications folder
-3. Launch "Claude Usage Widget" from Applications
+- **Windows:** `BurnRate-{version}-win-Setup.exe` (installer) or `BurnRate-{version}-win-portable.exe` (no install needed)
+- **macOS:** `BurnRate-{version}-macOS-arm64.dmg` (Apple Silicon) or `BurnRate-{version}-macOS-x64.dmg` (Intel)
+- **Linux:** `BurnRate-{version}-linux-x64.AppImage` or `BurnRate-{version}-linux-arm64.AppImage`
 
-> **⚠️ macOS Security Notice:** Because this app is not yet notarized with Apple, macOS Gatekeeper may show a "damaged or can't be opened" warning. To fix this, run the following command in Terminal after installing:
-> ```
-> xattr -cr /Applications/Claude\ Usage\ Widget.app
-> ```
-> Then try launching the app again.
+> **macOS:** if a release isn't notarized, Gatekeeper may show a "damaged or can't be opened" warning. Fix it by running `xattr -cr /Applications/BurnRate.app` in Terminal, then launch again.
 
-**Linux:**
-1. Download the latest `Claude-Usage-Widget-{version}-linux-x86_64.AppImage` (Intel/AMD) or `Claude-Usage-Widget-{version}-linux-arm64.AppImage` (ARM) from [Releases](../../releases)
-2. Make it executable: `chmod +x Claude-Usage-Widget-*.AppImage`
-3. Run it: `./Claude-Usage-Widget-*.AppImage`
-
-> **Note:** AppImage runs without installation on most Linux distributions. On Ubuntu 22.04+, you may need to install a dependency first:
-> ```bash
-> sudo apt install libfuse2
-> ```
-
-#### Linux: Desktop Launcher & Autostart (optional)
-
-By default the AppImage runs from wherever you put it. To get a clickable icon in your app launcher (and optionally launch at login), follow these steps.
-
-**1. Place the AppImage somewhere permanent:**
-```bash
-mkdir -p ~/.local/bin
-mv Claude-Usage-Widget-*.AppImage ~/.local/bin/claude-usage-widget.AppImage
-chmod +x ~/.local/bin/claude-usage-widget.AppImage
-```
-
-**2. Create a desktop entry:**
-```bash
-cat > ~/.local/share/applications/claude-usage-widget.desktop << EOF
-[Desktop Entry]
-Name=Claude Usage Widget
-Comment=Monitor Claude.ai usage
-Exec=$HOME/.local/bin/claude-usage-widget.AppImage --no-sandbox
-Icon=$HOME/.local/bin/claude-usage-widget.AppImage
-Terminal=false
-Type=Application
-Categories=Utility;
-StartupNotify=true
-EOF
-```
-
-> **Note:** The `--no-sandbox` flag is required for Electron-based AppImages on most Linux systems due to sandbox namespace restrictions. This is an Electron/Chrome limitation, not specific to this widget.
-
-**3. Register the entry:**
-```bash
-update-desktop-database ~/.local/share/applications/
-```
-
-The widget should now appear in your application launcher. Test it by launching from your app menu before proceeding to autostart.
-
-**4. Autostart at login (optional):**
-```bash
-mkdir -p ~/.config/autostart
-cp ~/.local/share/applications/claude-usage-widget.desktop ~/.config/autostart/
-```
-
----
+> **Linux:** AppImages run without installation. On Ubuntu 22.04+ you may need `sudo apt install libfuse2` first.
 
 ### Build from Source
 
-**Prerequisites:**
-- Node.js 18+ ([Download](https://nodejs.org))
-- npm (comes with Node.js)
+**Prerequisites:** Node.js 18+ and npm.
 
 ```bash
-git clone https://github.com/SlavomirDurej/claude-usage-widget.git
-cd claude-usage-widget
+git clone https://github.com/spezzuti/burnrate-widget.git
+cd burnrate-widget
 npm install
 npm start
 ```
 
+To produce installable artifacts:
+
+```bash
+npm run build:win     # NSIS installer + portable exe
+npm run build:mac     # DMG (arm64 + x64)
+npm run build:linux   # AppImage (x64 + arm64)
+```
 
 ---
 
@@ -176,101 +98,80 @@ npm start
 
 ### First Launch
 
-1. Launch the widget
-2. Click "Login to Claude" when prompted
-3. A browser window will open — log in to your Claude.ai account
-4. The widget will automatically capture your session
-5. Usage data will start displaying immediately
+1. Launch BurnRate — it starts with Claude enabled by default
+2. Click "Login to Claude" and sign in through the embedded claude.ai window (or paste a session key manually)
+3. Open Settings (gear icon) to enable Codex and/or OpenRouter, and to pick which rows you want visible
+4. Codex picks up your existing `codex login` session automatically — no extra setup needed
+5. For OpenRouter, paste an API key from [openrouter.ai/keys](https://openrouter.ai/keys)
 
 ### Widget Controls
 
-- **Drag** — Click and drag the title bar to move the widget
-- **Refresh** — Click the refresh icon to update data immediately
-- **Graph** — Click the graph icon to toggle usage history
-- **Minimize** — Click the minus icon to hide to system tray / dock
-- **Close** — Click the X to Close the app
+- **Drag** the title bar to move the widget
+- **Refresh** icon to update data immediately
+- **Graph** icon to toggle the Claude usage history chart
+- **Minimize** icon to hide to the system tray / dock
+- **Gear** icon to open Settings
+- **X** to close the app
 
 ### System Tray
 
-Right-click the tray icon for: Show/Hide, Refresh, Re-login, Settings, Exit.
+BurnRate always keeps a tray icon for showing/hiding the widget; enable "Show tray stats" in Settings to turn it into two icons displaying live Claude session % and weekly %. Right-click for: Show Widget, Refresh, Log Out, Exit.
 
 ---
 
-## Understanding the Display
+## Config Location
 
-### Current Session & Weekly Limit
+Settings and encrypted credentials are stored via Electron's standard per-app data directory:
 
-| Column | Description |
-|--------|-------------|
-| Session Used | Progress bar showing usage from 0–100% |
-| Elapsed | Circular timer showing how far through the window you are |
-| Resets In | Countdown until the window resets |
-| Resets At | Actual local clock time / date when the window resets |
-
-**Color Coding:**
-- 🟣 Purple: Normal usage (below warning threshold, default 75%)
-- 🟠 Orange: High usage (above warning threshold)
-- 🔴 Red: Critical usage (above danger threshold, default 90%)
+- **Windows:** `%APPDATA%\BurnRate` (installed/packaged build) or `%APPDATA%\burnrate-widget` (running from source)
+- **macOS:** `~/Library/Application Support/BurnRate` (or `burnrate-widget` from source)
+- **Linux:** `~/.config/BurnRate` (or `burnrate-widget` from source)
 
 ---
 
 ## Privacy & Security
 
-- Credentials stored **locally only** using encrypted storage
-- No data sent to any third-party servers
-- Only communicates with the official Claude.ai API
-- Logout clears all session data, cookies, and Electron session storage
+- BurnRate talks only to **claude.ai**, **chatgpt.com** (for Codex usage), **openrouter.ai**, and **api.github.com** (for the startup update check against this repo's releases). No telemetry, no third-party analytics.
+- Your Claude session key and OpenRouter API key are encrypted at rest using your OS's native secure storage (DPAPI on Windows, Keychain on macOS, libsecret on Linux) via Electron's `safeStorage`. If OS-level encryption isn't available on your system, credentials fall back to plaintext storage locally — they are never sent anywhere except the provider they belong to, and the OpenRouter key is never displayed back in the UI once saved.
+- Codex needs no key at all — it reuses your local Codex CLI login.
+- "Log Out" from the tray menu clears your Claude session key, org ID, and all claude.ai cookies/session storage.
+- BurnRate is an **unofficial** tool and is not affiliated with Anthropic, OpenAI, or OpenRouter.
 
 ---
 
 ## Troubleshooting
 
-**"Login Required" keeps appearing** — Session may have expired. Click "Login to Claude" to re-authenticate.
+**"Login Required" keeps appearing (Claude)** — your session likely expired. Click "Login to Claude" to re-authenticate, or "Log Out" from the tray menu and log back in.
 
-**Widget not updating** — Check internet connection, click refresh manually, or try re-logging in from the tray menu.
+**Codex section shows a status line instead of data** — run `codex login` from the Codex CLI, then refresh.
 
-**Build errors** — Clean reinstall resolves most issues:
+**OpenRouter section shows an error** — double check the API key in Settings and that it hasn't been revoked at [openrouter.ai/keys](https://openrouter.ai/keys).
+
+**Widget not updating** — check your internet connection, click refresh manually, or re-login from the tray menu.
+
+**Build errors** — clean reinstall usually fixes it:
 ```bash
 rm -rf node_modules package-lock.json
 npm install
 ```
 
-If issues persist, open a [Support discussion](../../discussions/categories/support) with your OS, Node.js version, and full error output.
-
----
-
-## Roadmap
-
-- [x] macOS support
-- [x] Linux support
-- [x] Settings panel
-- [x] Remember window position
-- [x] Custom warning thresholds
-- [x] Configurable date & time formats
-- [x] Update notifications
-- [x] Usage alerts at thresholds
-- [x] Compact mode
-- [x] Usage history graph
-- [x] Currency support
-- [x] Organization/Teams support
-- [ ] Keyboard shortcuts
-
 ---
 
 ## Contributors
 
-Special thanks to these contributors who have improved the widget:
+BurnRate's foundation comes from claude-usage-widget. Special thanks to its contributors:
 
 - [@cwil2072](https://github.com/cwil2072) - macOS minimize/restore fix, usage history graph
 - [@dion-jy](https://github.com/dion-jy) - Login flow architecture improvements
 - [@goooseman](https://github.com/goooseman) - Login window security improvements
 - [@sergkuzn](https://github.com/sergkuzn) - Linux desktop launcher & autostart documentation
+- [@irishpolyglot](https://github.com/irishpolyglot) - Scoped weekly limits (Fable) support and extra-row timer fix, adopted from their upstream PR
 
 ---
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE) - see the LICENSE file for details.
+This project is licensed under the [MIT License](LICENSE) — see the LICENSE file for details.
 
 ---
 
