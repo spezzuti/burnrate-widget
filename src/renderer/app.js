@@ -14,7 +14,19 @@ let isFetching = false;       // in-flight guard — prevents overlapping fetchU
 const UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const WIDGET_HEIGHT_COLLAPSED = 155;
 const WIDGET_ROW_HEIGHT = 30;
-const GRAPH_HEIGHT = 232;
+// --- AI Usage: multi-provider --- graph height now includes the chip row.
+// Canvas area is preserved at the original 220px; GRAPH_CHIPS_BLOCK is the
+// one-row chip strip (min-height 22 + margin-bottom 8) minus the 4px reclaimed
+// from the section's reduced top padding (14 -> 10). 232 + 26 = 258.
+// GRAPH_CHIP_ROW is the single-row baseline (22px) already budgeted inside
+// GRAPH_HEIGHT; when many chips force the flex row to WRAP, buildGraphChips
+// measures the real rendered height and stashes the overflow beyond that
+// baseline in _graphChipsExtra, which resizeWidget adds to the graph offset.
+const GRAPH_CHIPS_BLOCK = 26;
+const GRAPH_CHIP_ROW = 22;
+const GRAPH_HEIGHT = 232 + GRAPH_CHIPS_BLOCK;
+let _graphChipsExtra = 0;
+// --- end AI Usage ---
 
 // --- AI Usage: multi-provider ---
 // Layout constants for the extra provider sections. Provider data rows are
@@ -117,6 +129,7 @@ const elements = {
     extraRows: document.getElementById('extraRows'),
     graphSection: document.getElementById('graphSection'),
     usageChart: document.getElementById('usageChart'),
+    graphChips: document.getElementById('graphChips'), // --- AI Usage: multi-provider ---
 
     settingsBtn: document.getElementById('settingsBtn'),
     settingsOverlay: document.getElementById('settingsOverlay'),
@@ -456,6 +469,12 @@ function setupEventListeners() {
         // feedback when toggling rows; applyVisibility() already resizes (when not
         // compact), and the resize memo no-ops any follow-up from fetchUsageData.
         applyVisibility();
+        // Rebuild the open chart immediately so a provider toggled off in
+        // Settings drops its plotted series and chips now, not on the next
+        // successful fetch (which may fail and leave them stale).
+        if (graphVisible && !isCompactMode) {
+            loadChart().catch(() => {});
+        }
         if (_settingsOpenedFromCompact) {
             _settingsOpenedFromCompact = false;
             if (isCompactMode) {
@@ -1431,7 +1450,8 @@ function resizeWidget(bannerVisible) {
     const expandedOffset = isExpanded && extraCount > 0
         ? EXPAND_OVERHEAD + (extraCount * WIDGET_ROW_HEIGHT)
         : 0;
-    const graphOffset = graphVisible ? GRAPH_HEIGHT : 0;
+    // --- AI Usage: multi-provider --- add chip-row wrap overflow when present
+    const graphOffset = graphVisible ? GRAPH_HEIGHT + _graphChipsExtra : 0;
     // --- AI Usage: multi-provider --- base height now depends on enabled providers/rows
     const baseHeight = computeCollapsedHeight();
     const totalHeight = baseHeight + expandedOffset + graphOffset + bannerOffset;
@@ -2247,162 +2267,209 @@ function stopAutoUpdate() {
     }
 }
 
-async function loadChart() {
-    const history = await window.electronAPI.getUsageHistory();
-    if (!history.length) return;
-    renderChart(history);
+// --- AI Usage: multi-provider ---
+// Graph series metadata. Usage-mode series render on a percent axis (0-100);
+// spend-mode series on a dollar axis. `src` selects the adapter data source,
+// `field` the metric key within it. Claude session/weekly are solid lines;
+// Codex reuses Claude's purple/blue but DASHED to read as "the other provider".
+// Per-model Claude series (`optional: true`) reuse the OLD chart's line colors
+// (Sonnet rose, Opus amber, Cowork cyan, Design brown, OAuth orange) so
+// returning users see familiar hues. Their chips only appear when the loaded
+// Claude history actually contains non-zero data for that field, and they
+// default OFF (extraUsage is excluded — it's a dollar figure, not a percent).
+const GRAPH_USAGE_SERIES = [
+    { provider: 'claude', key: 'session',   label: 'Session',  color: '#8b5cf6', dash: false, src: 'claude', field: 'session' },
+    { provider: 'claude', key: 'weekly',    label: 'Weekly',   color: '#3b82f6', dash: false, src: 'claude', field: 'weekly' },
+    { provider: 'claude', key: 'sonnet',    label: 'Sonnet',   color: '#f43f5e', dash: false, src: 'claude', field: 'sonnet',    optional: true },
+    { provider: 'claude', key: 'opus',      label: 'Opus',     color: '#f59e0b', dash: false, src: 'claude', field: 'opus',      optional: true },
+    { provider: 'claude', key: 'cowork',    label: 'Cowork',   color: '#06b6d4', dash: false, src: 'claude', field: 'cowork',    optional: true },
+    { provider: 'claude', key: 'design',    label: 'Design',   color: '#92400e', dash: false, src: 'claude', field: 'design',    optional: true },
+    { provider: 'claude', key: 'oauthApps', label: 'OAuth',    color: '#f97316', dash: false, src: 'claude', field: 'oauthApps', optional: true },
+    { provider: 'codex',  key: 'window',    label: 'Codex 5h', color: '#8b5cf6', dash: true,  src: 'codex',  field: 'window' },
+    { provider: 'codex',  key: 'weekly',    label: 'Codex 7d', color: '#3b82f6', dash: true,  src: 'codex',  field: 'weekly' }
+];
+// Spend series use OpenRouter's credits green (#10b981) plus two hue neighbours.
+const GRAPH_SPEND_SERIES = [
+    { provider: 'openrouter', key: 'today', label: 'Today', color: '#10b981', dash: false, src: 'or', field: 'today' },
+    { provider: 'openrouter', key: 'week',  label: 'Week',  color: '#22c55e', dash: false, src: 'or', field: 'week' },
+    { provider: 'openrouter', key: 'month', label: 'Month', color: '#84cc16', dash: false, src: 'or', field: 'month' }
+];
+
+// Current in-memory graph series selection (mode + per-provider toggles),
+// hydrated from settings.graphSeries on each loadChart and persisted on change.
+let graphSeriesState = null;
+
+// Merge stored settings.graphSeries with defaults, applying a provider-aware
+// fallback: when Claude is disabled and the user hasn't explicitly chosen Codex
+// usage series, default them ON so usage mode isn't empty.
+function getGraphSeries(settings) {
+    const { providers } = getProviderPrefs(settings);
+    const stored = (settings && settings.graphSeries) || {};
+    const su = stored.usage || {};
+    const gs = {
+        mode: stored.mode === 'spend' ? 'spend' : 'usage',
+        usage: {
+            claude: Object.assign(
+                { session: true, weekly: true, sonnet: false, opus: false, cowork: false, design: false, oauthApps: false },
+                su.claude || {}
+            ),
+            codex: Object.assign({ window: false, weekly: false }, su.codex || {})
+        },
+        spend: {
+            openrouter: Object.assign({ today: true, week: false, month: false }, (stored.spend || {}).openrouter || {})
+        }
+    };
+    if (!providers.claude && !su.codex) {
+        gs.usage.codex.window = true;
+        gs.usage.codex.weekly = true;
+    }
+    return gs;
 }
 
-function renderChart(history) {
+// Persist the current graph series selection through the standard settings
+// round-trip (additive: main.js only writes settings.graphSeries when present).
+async function persistGraphSeries() {
+    const base = window._cachedSettings || await window.electronAPI.getSettings();
+    base.graphSeries = graphSeriesState;
+    window._cachedSettings = base;
+    try { await window.electronAPI.saveSettings(base); } catch (e) { debugLog('persistGraphSeries failed', e); }
+}
+
+// True if `provider` is enabled in settings.
+function graphProviderEnabled(provider) {
+    const { providers } = getProviderPrefs(window._cachedSettings || {});
+    return !!providers[provider];
+}
+
+// Series list for a mode, filtered to enabled providers.
+function graphSeriesForMode(mode) {
+    const list = mode === 'spend' ? GRAPH_SPEND_SERIES : GRAPH_USAGE_SERIES;
+    return list.filter((s) => graphProviderEnabled(s.provider));
+}
+
+function graphSeriesSelected(mode, s) {
+    const bucket = graphSeriesState && graphSeriesState[mode];
+    return !!(bucket && bucket[s.provider] && bucket[s.provider][s.key]);
+}
+
+function setGraphSeriesSelected(mode, s, value) {
+    const bucket = graphSeriesState[mode];
+    if (!bucket[s.provider]) bucket[s.provider] = {};
+    bucket[s.provider][s.key] = value;
+}
+
+async function loadChart() {
+    const settings = window._cachedSettings || await window.electronAPI.getSettings();
+    graphSeriesState = getGraphSeries(settings);
+    const { providers } = getProviderPrefs(settings);
+
+    // If the persisted mode has no enabled providers, fall back to the other one.
+    if (graphSeriesForMode(graphSeriesState.mode).length === 0) {
+        graphSeriesState.mode = graphSeriesState.mode === 'usage' ? 'spend' : 'usage';
+    }
+
+    // Pull each enabled source concurrently. Claude keeps its untouched endpoint.
+    const [claudeHistory, codexRes, orRes] = await Promise.all([
+        providers.claude ? window.electronAPI.getUsageHistory() : Promise.resolve([]),
+        providers.codex ? window.electronAPI.getProviderHistory('codex') : Promise.resolve({ points: [] }),
+        providers.openrouter ? window.electronAPI.getProviderHistory('openrouter') : Promise.resolve({ points: [] })
+    ]);
+
+    renderChart({
+        claude: Array.isArray(claudeHistory) ? claudeHistory : [],
+        codex: (codexRes && codexRes.points) || [],
+        or: (orRes && orRes.points) || []
+    });
+}
+
+// Adapter: Claude history record -> {x,y}. Record shape is untouched.
+function claudeXY(history, field) {
+    return history.map((e) => ({ x: e.timestamp, y: e[field] || 0 }));
+}
+// Adapter: provider envelope point -> {x,y}.
+function providerXY(points, field) {
+    return points.map((p) => ({
+        x: p.t,
+        // null (absent in a partial fetch) renders as a line gap, not a 0 spike
+        y: (p.metrics && typeof p.metrics[field] === 'number') ? p.metrics[field] : null
+    }));
+}
+
+// Round a dollar value up to a tidy 1/2/5 x 10^n bound so the spend axis stays
+// clean and gridlines don't jitter between refreshes.
+function niceCeil(v) {
+    if (!(v > 0)) return 1;
+    const mag = Math.pow(10, Math.floor(Math.log10(v)));
+    const n = v / mag;
+    const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+    return step * mag;
+}
+
+function renderChart(sources) {
     if (usageChart) usageChart.destroy();
 
-    const showSonnet = isExpanded && !!latestUsageData?.seven_day_sonnet;
-    const showOpus = isExpanded && !!latestUsageData?.seven_day_opus;
-    const showCowork = isExpanded && !!latestUsageData?.seven_day_cowork;
-    const showDesign = isExpanded && !!latestUsageData?.seven_day_omelette;
-    const showOAuthApps = isExpanded && !!latestUsageData?.seven_day_oauth_apps;
-    const showExtraUsage = isExpanded && !!latestUsageData?.extra_usage;
-    const allValues = history.flatMap((entry) => {
-        const values = [entry.session, entry.weekly];
-        if (showSonnet) values.push(entry.sonnet || 0);
-        if (showOpus) values.push(entry.opus || 0);
-        if (showCowork) values.push(entry.cowork || 0);
-        if (showDesign) values.push(entry.design || 0);
-        if (showOAuthApps) values.push(entry.oauthApps || 0);
-        if (showExtraUsage) values.push(entry.extraUsage || 0);
-        return values;
-    });
-    const yMax = Math.max(10, Math.ceil(Math.max(...allValues) / 10) * 10);
+    const mode = graphSeriesState.mode;
+    const isSpend = mode === 'spend';
+    const seriesList = graphSeriesForMode(mode);
 
-    const datasets = [
-        {
-            label: 'Session',
-            data: history.map((entry) => ({ x: entry.timestamp, y: entry.session })),
-            borderColor: '#8b5cf6',
+    // Optional (per-model Claude) series only exist when the loaded history has
+    // non-zero data for that field at least once — avoids a row of dead chips
+    // on accounts without model breakdowns. Cheap single scan per field.
+    const availability = graphSeriesAvailability(sources);
+
+    // Chip row reflects every enabled series in BOTH modes (unit-grouped).
+    buildGraphChips(sources, availability);
+
+    // Datasets: only selected series in the active mode that actually have data.
+    const datasets = [];
+    const allX = [];
+    for (const s of seriesList) {
+        if (s.optional && !availability[s.field]) continue;
+        if (!graphSeriesSelected(mode, s)) continue;
+        const data = s.src === 'claude' ? claudeXY(sources.claude, s.field)
+            : s.src === 'codex' ? providerXY(sources.codex, s.field)
+                : providerXY(sources.or, s.field);
+        if (!data.length) continue;
+        for (const pt of data) allX.push(pt.x);
+        datasets.push({
+            label: s.label,
+            data,
+            borderColor: s.color,
             backgroundColor: 'transparent',
             borderWidth: 2,
+            borderDash: s.dash ? [5, 4] : [],
             stepped: true,
             pointRadius: 0,
             pointHoverRadius: 3,
             pointHitRadius: 10
-        },
-        {
-            label: 'Weekly',
-            data: history.map((entry) => ({ x: entry.timestamp, y: entry.weekly })),
-            borderColor: '#3b82f6',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            stepped: true,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            pointHitRadius: 10
-        }
-    ];
-
-    if (showSonnet) {
-        const sonnetData = history.map((entry) => entry.sonnet || 0);
-        if (sonnetData.some((value) => value > 0)) {
-            datasets.push({
-                label: 'Sonnet',
-                data: history.map((entry) => ({ x: entry.timestamp, y: entry.sonnet || 0 })),
-                borderColor: '#f43f5e',
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                stepped: true,
-                pointRadius: 0,
-                pointHoverRadius: 3,
-                pointHitRadius: 10
-            });
-        }
+        });
     }
 
-    if (showOpus) {
-        const opusData = history.map((entry) => entry.opus || 0);
-        if (opusData.some((value) => value > 0)) {
-            datasets.push({
-                label: 'Opus',
-                data: history.map((entry) => ({ x: entry.timestamp, y: entry.opus || 0 })),
-                borderColor: '#f59e0b',
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                stepped: true,
-                pointRadius: 0,
-                pointHoverRadius: 3,
-                pointHitRadius: 10
-            });
-        }
+    // Time range across visible datasets (fallback to last 24h when empty).
+    let xMin, xMax;
+    if (allX.length) {
+        xMin = Math.min(...allX);
+        xMax = Math.max(...allX);
+        if (xMin === xMax) xMin = xMax - 60 * 60 * 1000;
+    } else {
+        xMax = Date.now();
+        xMin = xMax - 24 * 60 * 60 * 1000;
     }
-
-    if (showCowork) {
-        const coworkData = history.map((entry) => entry.cowork || 0);
-        if (coworkData.some((value) => value > 0)) {
-            datasets.push({
-                label: 'Cowork',
-                data: history.map((entry) => ({ x: entry.timestamp, y: entry.cowork || 0 })),
-                borderColor: '#06b6d4',
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                stepped: true,
-                pointRadius: 0,
-                pointHoverRadius: 3,
-                pointHitRadius: 10
-            });
-        }
-    }
-
-    if (showDesign) {
-        const designData = history.map((entry) => entry.design || 0);
-        if (designData.some((value) => value > 0)) {
-            datasets.push({
-                label: 'Design',
-                data: history.map((entry) => ({ x: entry.timestamp, y: entry.design || 0 })),
-                borderColor: '#92400e',
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                stepped: true,
-                pointRadius: 0,
-                pointHoverRadius: 3,
-                pointHitRadius: 10
-            });
-        }
-    }
-
-    if (showOAuthApps) {
-        const oauthAppsData = history.map((entry) => entry.oauthApps || 0);
-        if (oauthAppsData.some((value) => value > 0)) {
-            datasets.push({
-                label: 'OAuth Apps',
-                data: history.map((entry) => ({ x: entry.timestamp, y: entry.oauthApps || 0 })),
-                borderColor: '#f97316',
-                backgroundColor: 'transparent',
-                borderWidth: 2,
-                stepped: true,
-                pointRadius: 0,
-                pointHoverRadius: 3,
-                pointHitRadius: 10
-            });
-        }
-    }
-
-    if (showExtraUsage) {
-        const extraUsageData = history.map((entry) => entry.extraUsage || 0);
-        if (extraUsageData.some((value) => value > 0)) {
-            datasets.push({
-            label: 'Extra Usage',
-            data: history.map((entry) => ({ x: entry.timestamp, y: entry.extraUsage || 0 })),
-            borderColor: '#f59e0b',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            stepped: true,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            pointHitRadius: 10
-            });
-        }
-    }
-
-    const firstDayMidnight = new Date(history[0].timestamp);
+    const firstDayMidnight = new Date(xMin);
     firstDayMidnight.setHours(0, 0, 0, 0);
+    const spanMs = xMax - xMin;
+
+    // Y axis: percent 0-100 for usage; autoscaled dollars for spend. BOTH use 5
+    // ticks (4 intervals) so horizontal gridlines share fractions and never shift.
+    const TICK_COUNT = 5;
+    let yMax;
+    if (isSpend) {
+        const vals = datasets.flatMap((d) => d.data.map((p) => p.y));
+        const rawMax = vals.length ? Math.max(0, ...vals) : 0;
+        yMax = niceCeil(rawMax / 4) * 4; // clean step * 4 intervals
+    } else {
+        yMax = 100;
+    }
 
     usageChart = new Chart(elements.usageChart.getContext('2d'), {
         type: 'line',
@@ -2411,20 +2478,16 @@ function renderChart(history) {
             animation: false,
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                intersect: false,
-                mode: 'nearest'
-            },
+            interaction: { intersect: false, mode: 'nearest' },
             scales: {
                 x: {
                     type: 'linear',
                     min: firstDayMidnight.getTime(),
-                    max: history[history.length - 1].timestamp,
+                    max: xMax,
                     afterBuildTicks(axis) {
-                        const end = history[history.length - 1].timestamp;
                         const d = new Date(firstDayMidnight.getTime());
                         const ticks = [];
-                        while (d.getTime() <= end) {
+                        while (d.getTime() <= xMax) {
                             ticks.push({ value: d.getTime() });
                             d.setDate(d.getDate() + 1);
                         }
@@ -2433,58 +2496,125 @@ function renderChart(history) {
                     ticks: {
                         maxRotation: 0,
                         minRotation: 0,
-                        font: {
-                            size: 10
-                        },
+                        font: { size: 10 },
                         callback(value) {
                             const tf = (window._cachedSettings || {}).timeFormat || '12h';
-                            const spanMs = history.length > 1
-                                ? history[history.length - 1].timestamp - history[0].timestamp
-                                : 0;
                             return formatTimestampTick(value, spanMs, tf);
                         }
                     },
-                    grid: {
-                        display: false
-                    }
+                    grid: { display: false }
                 },
                 y: {
                     min: 0,
                     max: yMax,
+                    beginAtZero: true,
                     ticks: {
-                        font: {
-                            size: 10
-                        },
-                        callback: (value) => `${value}%`
+                        count: TICK_COUNT,
+                        font: { size: 10 },
+                        callback: (value) => isSpend
+                            ? `$${Number(value) % 1 === 0 ? value : Number(value).toFixed(2)}`
+                            : `${value}%`
                     },
-                    grid: {
-                        color: 'rgba(255, 255, 255, 0.05)'
-                    }
+                    grid: { color: 'rgba(255, 255, 255, 0.05)' }
                 }
             },
             plugins: {
-                legend: {
-                    display: false
-                },
+                legend: { display: false },
                 tooltip: {
                     callbacks: {
                         title(items) {
                             return new Date(items[0].parsed.x).toLocaleString([], {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: 'numeric',
-                                minute: '2-digit'
+                                month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
                             });
                         },
                         label(item) {
-                            return `${item.dataset.label}: ${Math.round(item.parsed.y)}%`;
+                            return isSpend
+                                ? `${item.dataset.label}: ${fmtUSD(item.parsed.y)}`
+                                : `${item.dataset.label}: ${Math.round(item.parsed.y)}%`;
                         }
                     }
                 }
             }
         }
     });
+
+    // The chip row may have wrapped (buildGraphChips updated _graphChipsExtra),
+    // so re-run the height math; resizeWidget dedups identical heights.
+    if (!isCompactMode) resizeWidget();
 }
+
+// Scan the loaded Claude history once per optional field, marking which
+// per-model series have any non-zero sample in the window. Session/weekly and
+// non-Claude series are always considered available (data-length gating for
+// those happens at dataset build time).
+function graphSeriesAvailability(sources) {
+    const availability = {};
+    for (const s of GRAPH_USAGE_SERIES) {
+        if (!s.optional) continue;
+        availability[s.field] = sources.claude.some((e) => (e[s.field] || 0) > 0);
+    }
+    return availability;
+}
+
+// Render the unit-grouped legend chip row. Chips exist only for ENABLED
+// providers (and, for optional per-model series, only when history has data).
+// Active = selected AND in the current mode (color dot + bright text).
+// Chips for the other mode read dimmed and switch mode when clicked.
+function buildGraphChips(sources, availability) {
+    const container = elements.graphChips;
+    if (!container) return;
+    container.innerHTML = '';
+    const mode = graphSeriesState.mode;
+
+    const usage = graphSeriesForMode('usage')
+        .filter((s) => !s.optional || (availability && availability[s.field]));
+    const spend = graphSeriesForMode('spend');
+
+    const makeChip = (chipMode, s) => {
+        const chip = document.createElement('div');
+        chip.className = 'graph-chip';
+        const inActiveMode = chipMode === mode;
+        const selected = graphSeriesSelected(chipMode, s);
+        if (inActiveMode && selected) chip.classList.add('active');
+        if (!inActiveMode) chip.classList.add('off-mode');
+
+        const dot = document.createElement('span');
+        dot.className = 'chip-dot';
+        dot.style.color = s.color;
+        chip.appendChild(dot);
+        const text = document.createElement('span');
+        text.textContent = s.label;
+        chip.appendChild(text);
+
+        chip.addEventListener('click', async () => {
+            if (chipMode !== graphSeriesState.mode) {
+                // Switch unit/mode; ensure the clicked series is on so something shows.
+                graphSeriesState.mode = chipMode;
+                if (!graphSeriesSelected(chipMode, s)) setGraphSeriesSelected(chipMode, s, true);
+            } else {
+                setGraphSeriesSelected(chipMode, s, !graphSeriesSelected(chipMode, s));
+            }
+            await persistGraphSeries();
+            renderChart(sources);
+        });
+        return chip;
+    };
+
+    usage.forEach((s) => container.appendChild(makeChip('usage', s)));
+    if (usage.length && spend.length) {
+        const sep = document.createElement('div');
+        sep.className = 'graph-chip-sep';
+        container.appendChild(sep);
+    }
+    spend.forEach((s) => container.appendChild(makeChip('spend', s)));
+
+    // Measure the rendered row: any height beyond the single-row baseline
+    // (chips wrapped onto extra lines) must be added to the window's graph
+    // offset. Reads 0 while the section is hidden, which is correct — the
+    // graph contributes no height then either.
+    _graphChipsExtra = Math.max(0, container.offsetHeight - GRAPH_CHIP_ROW);
+}
+// --- end AI Usage ---
 
 function formatTimestampTick(timestamp, spanMs, timeFormat) {
     const date = new Date(timestamp);
@@ -2652,6 +2782,10 @@ async function saveSettings() {
     };
 
     // --- AI Usage: multi-provider ---
+    // Carry the current graph series selection through so cached settings stay
+    // consistent (main.js only persists it when defined; omit when the graph
+    // hasn't been opened yet so stored defaults survive).
+    if (graphSeriesState) settings.graphSeries = graphSeriesState;
     // If OpenRouter was just enabled and has no data yet, clear the throttle so
     // the post-close refresh fetches it right away.
     if (settings.providers.openrouter && !openRouterFetched) {

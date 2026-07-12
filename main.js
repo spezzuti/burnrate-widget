@@ -142,6 +142,42 @@ function pruneStaleHistoryKeys() {
   for (const key of allKeys) {
     if (!key.startsWith('usageHistory_') && key !== 'usageHistory') continue;
     const history = store.get(key, []);
+    // --- AI Usage: multi-provider ---
+    // Provider history (codex/openrouter) is stored as an envelope object
+    // { v, points:[{t,metrics}] }, NOT an array — the original .filter() below
+    // assumes arrays and would throw on it. Detect the envelope shape and prune
+    // its `points` in place; array-shaped (Claude) keys fall through unchanged.
+    if (history && !Array.isArray(history) && Array.isArray(history.points)) {
+      const freshPoints = history.points.filter((p) => p && p.t > cutoff);
+      if (freshPoints.length === 0) {
+        store.delete(key);
+        debugLog('[History] Deleted stale provider key:', key);
+      } else if (freshPoints.length < history.points.length) {
+        store.set(key, { ...history, points: freshPoints });
+        debugLog('[History] Pruned', history.points.length - freshPoints.length, 'old points from', key);
+      }
+      continue;
+    }
+    // Anything that is neither an envelope nor an array (corrupted value,
+    // foreign shape) must not reach the array .filter() below — a single bad
+    // usageHistory_* value would otherwise throw and abort startup.
+    if (!Array.isArray(history)) {
+      debugLog('[History] Skipping unrecognized shape for key:', key);
+      continue;
+    }
+    // Legacy bare-array provider keys hold {t,metrics} points, not Claude's
+    // {timestamp,...} records — the .timestamp filter below would judge every
+    // entry stale and silently delete the key. Prune them by .t instead.
+    if (key === 'usageHistory_codex' || key === 'usageHistory_openrouter') {
+      const freshPoints = history.filter((p) => p && p.t > cutoff);
+      if (freshPoints.length === 0) {
+        store.delete(key);
+      } else if (freshPoints.length < history.length) {
+        store.set(key, { v: 1, points: freshPoints });
+      }
+      continue;
+    }
+    // --- end AI Usage ---
     const fresh = history.filter((entry) => entry.timestamp > cutoff);
     if (fresh.length === 0) {
       store.delete(key);
@@ -152,6 +188,105 @@ function pruneStaleHistoryKeys() {
     }
   }
 }
+
+// --- AI Usage: multi-provider ---
+// Provider usage-history storage (Codex, OpenRouter). Deliberately SEPARATE from
+// Claude's storeUsageHistory / usageHistory_{orgId} path, which stays byte-
+// compatible (same key, record shape, and writer). Envelope shape:
+//   { v: 1, points: [{ t, metrics }] }
+//     - Codex metrics:      { window, weekly }        (5h / 7d utilization %)
+//     - OpenRouter metrics: { today, week, month }    (USD spend)
+// Keys are lazy-created on first successful write.
+const PROVIDER_HISTORY_KEYS = { codex: 'usageHistory_codex', openrouter: 'usageHistory_openrouter' };
+const PROVIDER_HISTORY_HEARTBEAT_MS = 5 * 60 * 1000; // force a point at least this often
+const OPENROUTER_HISTORY_MIN_GAP_MS = 60 * 1000;     // OpenRouter: at most one write / 60s
+let lastOpenRouterHistoryWrite = 0;
+
+// Default per-mode graph series selection. Additive setting round-tripped through
+// get-settings / save-settings. Persisted whole, mirroring settings.visibleRows.
+const DEFAULT_GRAPH_SERIES = {
+  mode: 'usage',
+  usage: {
+    // Per-model Claude series (sonnet..oauthApps) default OFF; their chips only
+    // appear when the stored history has non-zero data for that field.
+    claude: { session: true, weekly: true, sonnet: false, opus: false, cowork: false, design: false, oauthApps: false },
+    codex: { window: false, weekly: false }
+  },
+  spend: {
+    openrouter: { today: true, week: false, month: false }
+  }
+};
+
+// Read a provider history key into a normalized envelope. Tolerates a legacy bare
+// ARRAY (treats it as `points`) so a pre-envelope key still reads; it is rewritten
+// as an envelope on the next write.
+function readProviderHistoryEnvelope(key) {
+  const raw = store.get(key);
+  if (Array.isArray(raw)) return { v: 1, points: raw };
+  if (raw && Array.isArray(raw.points)) return { v: 1, points: raw.points };
+  return { v: 1, points: [] };
+}
+
+function providerMetricsEqual(a, b) {
+  if (!a || !b) return false;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const k of keys) {
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
+// Append a point to a provider history envelope under the shared
+// changed-OR-5min-heartbeat rule, then apply 8-day retention + sample-cap
+// pruning. Skips identical points inside the heartbeat window. Returns true if a
+// point was written.
+function appendProviderHistoryPoint(key, metrics) {
+  const now = Date.now();
+  const env = readProviderHistoryEnvelope(key);
+  const last = env.points[env.points.length - 1];
+  const changed = !last || !providerMetricsEqual(last.metrics, metrics);
+  const heartbeat = last && (now - last.t) >= PROVIDER_HISTORY_HEARTBEAT_MS;
+  if (last && !changed && !heartbeat) return false;
+
+  env.points.push({ t: now, metrics });
+
+  const cutoff = now - (HISTORY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  env.points = env.points.filter((p) => p && p.t > cutoff);
+  if (env.points.length > MAX_HISTORY_SAMPLES) {
+    env.points = env.points.slice(env.points.length - MAX_HISTORY_SAMPLES);
+  }
+  store.set(key, env);
+  return true;
+}
+
+// Codex writer — called from the fetch-codex-data handler on a successful fetch.
+function storeCodexHistory(result) {
+  if (!result || !result.ok) return;
+  const w = (result.five_hour && typeof result.five_hour.utilization === 'number') ? result.five_hour.utilization : null;
+  const wk = (result.seven_day && typeof result.seven_day.utilization === 'number') ? result.seven_day.utilization : null;
+  if (w === null && wk === null) return;
+  // Absent fields stay null (partial fetch) — the chart renders them as a gap
+  // rather than a spurious drop to 0.
+  appendProviderHistoryPoint(PROVIDER_HISTORY_KEYS.codex, { window: w, weekly: wk });
+}
+
+// OpenRouter writer — called from the fetch-openrouter-data handler on success.
+// Throttled to at most one write per 60s on top of the heartbeat rule.
+function storeOpenRouterHistory(result) {
+  if (!result || !result.ok || !result.spend) return;
+  const now = Date.now();
+  if (now - lastOpenRouterHistoryWrite < OPENROUTER_HISTORY_MIN_GAP_MS) return;
+  const s = result.spend;
+  const today = typeof s.today === 'number' ? s.today : null;
+  const week = typeof s.week === 'number' ? s.week : null;
+  const month = typeof s.month === 'number' ? s.month : null;
+  if (today === null && week === null && month === null) return;
+  lastOpenRouterHistoryWrite = now;
+  // Absent fields stay null (partial fetch) — the chart renders them as a gap
+  // rather than a spurious drop to $0.
+  appendProviderHistoryPoint(PROVIDER_HISTORY_KEYS.openrouter, { today, week, month });
+}
+// --- end AI Usage ---
 
 // Set session-level User-Agent to avoid Electron detection
 app.on('ready', () => {
@@ -929,13 +1064,17 @@ ipcMain.handle('fetch-openrouter-data', async () => {
     return { ok: false, errorKind: 'no-key', error: 'No OpenRouter API key configured' };
   }
 
-  return await fetchOpenRouter(apiKey);
+  const result = await fetchOpenRouter(apiKey);
+  storeOpenRouterHistory(result); // --- AI Usage: multi-provider --- record spend history point
+  return result;
 });
 
 // Fetch Codex (ChatGPT subscription) usage. The provider reads its own OAuth
 // tokens from ~/.codex/auth.json, so no key handling is needed here.
 ipcMain.handle('fetch-codex-data', async () => {
-  return await fetchCodex();
+  const result = await fetchCodex();
+  storeCodexHistory(result); // --- AI Usage: multi-provider --- record utilization history point
+  return result;
 });
 
 // Save the OpenRouter API key. Encrypts via safeStorage when available,
@@ -1103,6 +1242,21 @@ ipcMain.handle('get-usage-history', () => {
     .sort((a, b) => a.timestamp - b.timestamp);
 });
 
+// --- AI Usage: multi-provider ---
+// Return normalized provider history { points: [{ t, metrics }] } for the graph
+// (Codex / OpenRouter). Claude keeps its untouched get-usage-history above.
+ipcMain.handle('get-provider-history', (event, provider) => {
+  const key = PROVIDER_HISTORY_KEYS[provider];
+  if (!key) return { points: [] };
+  const env = readProviderHistoryEnvelope(key);
+  const cutoff = Date.now() - (CHART_DAYS * 24 * 60 * 60 * 1000);
+  const points = env.points
+    .filter((p) => p && typeof p.t === 'number' && p.t > cutoff)
+    .sort((a, b) => a.t - b.t);
+  return { points };
+});
+// --- end AI Usage ---
+
 // Show a native OS desktop notification (Windows toast, macOS NC, Linux libnotify)
 ipcMain.on('show-notification', (event, { title, body }) => {
   if (Notification.isSupported()) {
@@ -1153,7 +1307,9 @@ ipcMain.handle('get-settings', () => {
 
       codex: { session: true, weekly: true },
       openrouter: { today: true, week: true, month: true, credits: true }
-    })
+    }),
+    // Per-mode graph series selection (usage vs spend). Additive; see DEFAULT_GRAPH_SERIES.
+    graphSeries: store.get('settings.graphSeries', DEFAULT_GRAPH_SERIES)
     // --- end AI Usage ---
   };
 });
@@ -1186,6 +1342,9 @@ ipcMain.handle('save-settings', (event, settings) => {
   }
   if (settings.visibleRows !== undefined) {
     store.set('settings.visibleRows', settings.visibleRows);
+  }
+  if (settings.graphSeries !== undefined) {
+    store.set('settings.graphSeries', settings.graphSeries);
   }
   // --- end AI Usage ---
 

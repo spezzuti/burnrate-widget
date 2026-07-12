@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- AI Usage: multi-provider ---
   fetchOpenRouterData: () => ipcRenderer.invoke('fetch-openrouter-data'),
   fetchCodexData: () => ipcRenderer.invoke('fetch-codex-data'),
+  getProviderHistory: (provider) => ipcRenderer.invoke('get-provider-history', provider),
   saveOpenRouterKey: (key) => ipcRenderer.invoke('save-openrouter-key', key),
   getOpenRouterKeyStatus: () => ipcRenderer.invoke('get-openrouter-key-status'),
   deleteOpenRouterKey: () => ipcRenderer.invoke('delete-openrouter-key'),

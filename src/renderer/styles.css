@@ -482,14 +482,100 @@ body {
 .graph-section {
     border-top: 1px solid rgba(255, 255, 255, 0.05);
     margin-top: 12px;
-    padding: 14px 16px 8px 12px;
+    padding: 10px 16px 8px 12px;
+}
+
+/* --- AI Usage: multi-provider --- unit-grouped legend chip row above the chart.
+   Height budget mirrors GRAPH_CHIPS_BLOCK (30px) in app.js resize math. */
+.graph-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px 6px;
+    margin-bottom: 8px;
+    min-height: 22px;
+}
+
+.graph-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    line-height: 16px;
+    font-weight: 500;
+    color: #6b6b6b;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid transparent;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.12s ease, background 0.12s ease;
+}
+
+.graph-chip:hover {
+    color: #a0a0a0;
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.graph-chip .chip-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.35;
+    flex-shrink: 0;
+}
+
+.graph-chip.active {
+    color: #e8e8e8;
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.graph-chip.active .chip-dot {
+    opacity: 1;
+}
+
+/* Chips belonging to the OTHER unit/mode read as dimmed; clicking switches mode. */
+.graph-chip.off-mode {
+    opacity: 0.5;
+}
+
+.graph-chip-sep {
+    width: 1px;
+    align-self: stretch;
+    margin: 2px 3px;
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.graph-canvas-wrap {
     height: 220px;
 }
 
-.graph-section canvas {
+.graph-canvas-wrap canvas {
     width: 100% !important;
     height: 100% !important;
 }
+
+body.theme-light .graph-chip {
+    color: #9a9a9a;
+    background: rgba(0, 0, 0, 0.04);
+}
+
+body.theme-light .graph-chip:hover {
+    color: #555;
+    background: rgba(0, 0, 0, 0.07);
+}
+
+body.theme-light .graph-chip.active {
+    color: #1a1a1a;
+    background: rgba(0, 0, 0, 0.08);
+}
+
+body.theme-light .graph-chip-sep {
+    background: rgba(0, 0, 0, 0.1);
+}
+/* --- end AI Usage --- */
 
 .graph-btn.active {
     background: rgba(139, 92, 246, 0.28);
