@@ -43,6 +43,15 @@ let lastOpenRouterFetch = 0;
 let latestCodexData = null;
 let openRouterFetched = false;   // true once OpenRouter has returned any result this session
 let codexAuthPresent = false;
+// --- AI Usage: multi-provider --- OpenAI has intermittently dropped the five_hour
+// window from the Codex usage API (it may return during heavy use or future API
+// changes). These flags gate row visibility on actual data presence, mirroring
+// fableDataPresent/computeFablePinnedVisible below. Initialized true (unlike
+// fableDataPresent) so both rows show before the first fetch completes, and are
+// only flipped false by a SUCCESSFUL fetch that confirms the window is absent —
+// a transient fetch error leaves the last-known presence alone (no flapping).
+let codexSessionPresent = true;
+let codexWeeklyPresent = true;
 // Last OpenRouter result — stored so the compact view can render credits without
 // re-fetching (renderOpenRouter is the only place OR data lands in the renderer).
 let latestOpenRouterData = null;
@@ -59,6 +68,7 @@ let _lastCompactHeight = -1;
 const COMPACT_BASE = 70;        // title bar (36) + content padding (12) + centering slack (22)
 const COMPACT_BLOCK_GAP = 10;   // vertical gap between provider blocks (.compact-rows gap)
 const COMPACT_TWO_BAR = 35;     // two bars (14 each) + inner gap (7)
+const COMPACT_ONE_BAR = 14;     // --- AI Usage: multi-provider --- single lone bar row (no inner gap, only one row); Codex when only one window is present
 const COMPACT_BAR_ROW = 21;     // --- AI Usage: multi-provider --- one extra bar row: bar (14) + block gap (7); adds the pinned Fable bar
 const COMPACT_OR_LINE = 14;     // single credits line
 const COMPACT_LABEL = 19;       // provider heading line (12) + block gap to first row (7)
@@ -968,6 +978,18 @@ function codexFriendlyMessage(data) {
     }
 }
 
+// --- AI Usage: multi-provider --- Combined gate for a Codex row: Codex enabled
+// AND its row checkbox on AND the window actually reported data this cycle.
+// Mirrors computeFablePinnedVisible() — kept as a function so both the height
+// arithmetic and the visibility pass read the same live condition.
+function computeCodexRowVisible(kind) {
+    const settings = window._cachedSettings || {};
+    const { providers: P, visibleRows } = getProviderPrefs(settings);
+    const present = kind === 'weekly' ? codexWeeklyPresent : codexSessionPresent;
+    return !!(P.codex && visibleRows.codex[kind] && present);
+}
+// --- end AI Usage ---
+
 // Populate a single Codex row (mirrors Claude's row population). `obj` is
 // { utilization, resets_at } or null. Reuses updateProgressBar/updateTimer so
 // the warn/danger thresholds and countdown behave identically to Claude.
@@ -1006,22 +1028,29 @@ function renderCodex(data) {
     if (!data || !data.ok) {
         elements.codexError.textContent = codexFriendlyMessage(data);
         elements.codexError.style.display = 'block';
-        applyCodexRow(elements.codexSessionProgress, elements.codexSessionPercentage,
-            elements.codexSessionTimer, elements.codexSessionTimeText, elements.codexSessionResetsAt,
-            null, 5 * 60, false);
-        applyCodexRow(elements.codexWeeklyProgress, elements.codexWeeklyPercentage,
-            elements.codexWeeklyTimer, elements.codexWeeklyTimeText, elements.codexWeeklyResetsAt,
-            null, 7 * 24 * 60, true);
+        // --- AI Usage: multi-provider --- a failed fetch leaves codexSessionPresent/
+        // codexWeeklyPresent (and the rows they gate) exactly as they were — a
+        // transient error must never flap a row hidden/visible.
         return;
     }
 
     elements.codexError.style.display = 'none';
-    applyCodexRow(elements.codexSessionProgress, elements.codexSessionPercentage,
-        elements.codexSessionTimer, elements.codexSessionTimeText, elements.codexSessionResetsAt,
-        data.five_hour, 5 * 60, false);
-    applyCodexRow(elements.codexWeeklyProgress, elements.codexWeeklyPercentage,
-        elements.codexWeeklyTimer, elements.codexWeeklyTimeText, elements.codexWeeklyResetsAt,
-        data.seven_day, 7 * 24 * 60, true);
+    // --- AI Usage: multi-provider --- only a SUCCESSFUL fetch may update presence,
+    // so a window OpenAI stops reporting hides instead of showing a permanent "—".
+    codexSessionPresent = !!(data.five_hour && data.five_hour.utilization !== undefined && data.five_hour.utilization !== null);
+    codexWeeklyPresent = !!(data.seven_day && data.seven_day.utilization !== undefined && data.seven_day.utilization !== null);
+
+    // Absent windows leave their (now-hidden) row untouched — no "—" churn.
+    if (codexSessionPresent) {
+        applyCodexRow(elements.codexSessionProgress, elements.codexSessionPercentage,
+            elements.codexSessionTimer, elements.codexSessionTimeText, elements.codexSessionResetsAt,
+            data.five_hour, 5 * 60, false);
+    }
+    if (codexWeeklyPresent) {
+        applyCodexRow(elements.codexWeeklyProgress, elements.codexWeeklyPercentage,
+            elements.codexWeeklyTimer, elements.codexWeeklyTimeText, elements.codexWeeklyResetsAt,
+            data.seven_day, 7 * 24 * 60, true);
+    }
 }
 
 // Live-tick the Codex reset countdowns from the shared 30s interval.
@@ -1096,7 +1125,6 @@ function computeCollapsedHeight() {
     const settings = window._cachedSettings || {};
     const { providers: P, visibleRows } = getProviderPrefs(settings);
     const vc = visibleRows.claude;
-    const vx = visibleRows.codex;
     const vo = visibleRows.openrouter;
 
     let h;
@@ -1115,8 +1143,10 @@ function computeCollapsedHeight() {
 
     if (P.codex) {
         h += SECTION_HEADER_HEIGHT;
-        if (vx.session) h += WIDGET_ROW_HEIGHT;
-        if (vx.weekly) h += WIDGET_ROW_HEIGHT;
+        // --- AI Usage: multi-provider --- gated on data presence too, so a window
+        // OpenAI stops reporting (e.g. five_hour) drops its height contribution.
+        if (computeCodexRowVisible('session')) h += WIDGET_ROW_HEIGHT;
+        if (computeCodexRowVisible('weekly')) h += WIDGET_ROW_HEIGHT;
     }
 
     if (P.openrouter) {
@@ -1146,7 +1176,6 @@ function applyVisibility() {
     const settings = window._cachedSettings || {};
     const { providers: P, visibleRows } = getProviderPrefs(settings);
     const vc = visibleRows.claude;
-    const vx = visibleRows.codex;
     const vo = visibleRows.openrouter;
 
     // Claude
@@ -1158,10 +1187,12 @@ function applyVisibility() {
     fablePinnedVisible = computeFablePinnedVisible();
     if (elements.claudeFableRow) elements.claudeFableRow.style.display = fablePinnedVisible ? '' : 'none';
 
-    // Codex
+    // Codex — each row is gated on data presence too (computeCodexRowVisible),
+    // so a window OpenAI stops reporting (e.g. five_hour) hides instead of
+    // showing a permanent "—".
     if (elements.codexSection) elements.codexSection.style.display = P.codex ? 'block' : 'none';
-    if (elements.codexSessionRow) elements.codexSessionRow.style.display = (P.codex && vx.session) ? '' : 'none';
-    if (elements.codexWeeklyRow) elements.codexWeeklyRow.style.display = (P.codex && vx.weekly) ? '' : 'none';
+    if (elements.codexSessionRow) elements.codexSessionRow.style.display = computeCodexRowVisible('session') ? '' : 'none';
+    if (elements.codexWeeklyRow) elements.codexWeeklyRow.style.display = computeCodexRowVisible('weekly') ? '' : 'none';
 
     // OpenRouter
     if (elements.openrouterSection) elements.openrouterSection.style.display = P.openrouter ? 'block' : 'none';
@@ -1778,7 +1809,12 @@ function appendCompactBarRow(block, label, util, weekly, variant) {
 
 // Build a two-bar provider block (Claude / Codex). `session`/`weekly` are the
 // { utilization, resets_at } objects (or null). Returns the block element.
-function buildCompactTwoBarBlock(labelText, showLabel, session, weekly) {
+// --- AI Usage: multi-provider --- `opts.showSession`/`opts.showWeekly` (both
+// default true) gate each bar row on data presence, mirroring the normal-mode
+// row gating in computeCodexRowVisible(). Claude's call site omits opts, so its
+// two bars always render exactly as before.
+function buildCompactTwoBarBlock(labelText, showLabel, session, weekly, opts) {
+    const { showSession = true, showWeekly = true } = opts || {};
     const block = document.createElement('div');
     block.className = 'compact-block';
     if (showLabel) {
@@ -1787,8 +1823,8 @@ function buildCompactTwoBarBlock(labelText, showLabel, session, weekly) {
         heading.textContent = labelText;
         block.appendChild(heading);
     }
-    appendCompactBarRow(block, 'Session', session ? session.utilization : null, false);
-    appendCompactBarRow(block, 'Weekly', weekly ? weekly.utilization : null, true);
+    if (showSession) appendCompactBarRow(block, 'Session', session ? session.utilization : null, false);
+    if (showWeekly) appendCompactBarRow(block, 'Weekly', weekly ? weekly.utilization : null, true);
     return block;
 }
 
@@ -1871,10 +1907,16 @@ function renderCompact() {
             height += COMPACT_OR_LINE;
         } else if (provider === 'codex') {
             const c = latestCodexData && latestCodexData.ok ? latestCodexData : null;
+            // --- AI Usage: multi-provider --- render only the windows OpenAI is
+            // currently reporting; e.g. a lone weekly bar when five_hour is absent.
+            const showSession = codexSessionPresent;
+            const showWeekly = codexWeeklyPresent;
             elements.compactRows.appendChild(
-                buildCompactTwoBarBlock('CODEX', showLabels, c && c.five_hour, c && c.seven_day)
+                buildCompactTwoBarBlock('CODEX', showLabels, c && c.five_hour, c && c.seven_day,
+                    { showSession, showWeekly })
             );
-            height += COMPACT_TWO_BAR;
+            if (showSession && showWeekly) height += COMPACT_TWO_BAR;
+            else if (showSession || showWeekly) height += COMPACT_ONE_BAR;
         } else {
             const u = latestUsageData;
             const block = buildCompactTwoBarBlock('CLAUDE', showLabels, u && u.five_hour, u && u.seven_day);

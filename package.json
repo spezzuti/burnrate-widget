@@ -1,6 +1,6 @@
 {
   "name": "burnrate-widget",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "BurnRate — desktop widget for AI usage monitoring (Claude, Codex, OpenRouter)",
   "main": "main.js",
   "scripts": {
