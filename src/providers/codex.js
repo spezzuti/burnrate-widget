@@ -233,22 +233,47 @@ function parseUsageResponse(data) {
   const primaryWindow = container.primary_window || container.primary;
   const secondaryWindow = container.secondary_window || container.secondary;
 
-  const primaryPercent = extractPercent(primaryWindow);
-  const secondaryPercent = extractPercent(secondaryWindow);
+  // OpenAI has reshuffled which window sits in which slot (observed 2026-07:
+  // primary_window became the 7-day window and the 5h window vanished when
+  // idle). Classify each window by its DURATION when one is available —
+  // <=6h → session, >=4d → weekly — and fall back to the historical
+  // positional mapping (primary→session, secondary→weekly) only for windows
+  // that carry no duration fields.
+  const windowDurationSeconds = (w) => {
+    if (!w || typeof w !== 'object') return null;
+    for (const c of [w.limit_window_seconds, w.window_seconds, w.window_duration_seconds]) {
+      if (typeof c === 'number' && isFinite(c) && c > 0) return c;
+      if (typeof c === 'string' && c.trim() !== '' && isFinite(Number(c))) return Number(c);
+    }
+    if (typeof w.window_minutes === 'number' && isFinite(w.window_minutes) && w.window_minutes > 0) {
+      return w.window_minutes * 60;
+    }
+    return null;
+  };
 
-  if (primaryPercent === null && secondaryPercent === null) {
+  let five_hour = null;
+  let seven_day = null;
+  const slotFor = (w, positionalSlot) => {
+    const dur = windowDurationSeconds(w);
+    if (dur !== null) return dur <= 6 * 3600 ? 'session' : dur >= 4 * 86400 ? 'weekly' : positionalSlot;
+    return positionalSlot;
+  };
+  const assign = (w, positionalSlot) => {
+    const pct = extractPercent(w);
+    if (pct === null) return;
+    const entry = { utilization: roundUtilization(pct), resets_at: extractResetsAt(w) };
+    const slot = slotFor(w, positionalSlot);
+    if (slot === 'session' && five_hour === null) five_hour = entry;
+    else if (slot === 'weekly' && seven_day === null) seven_day = entry;
+    else if (five_hour === null) five_hour = entry;
+    else if (seven_day === null) seven_day = entry;
+  };
+  assign(primaryWindow, 'session');
+  assign(secondaryWindow, 'weekly');
+
+  if (five_hour === null && seven_day === null) {
     return null;
   }
-
-  const five_hour = primaryPercent === null ? null : {
-    utilization: roundUtilization(primaryPercent),
-    resets_at: extractResetsAt(primaryWindow)
-  };
-
-  const seven_day = secondaryPercent === null ? null : {
-    utilization: roundUtilization(secondaryPercent),
-    resets_at: extractResetsAt(secondaryWindow)
-  };
 
   const result = { ok: true, five_hour, seven_day };
 
